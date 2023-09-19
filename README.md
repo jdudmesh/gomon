@@ -22,9 +22,32 @@ gomon <path to main.go>
 
 `gomon` supports a number of command line parameters:
 ```
+--config   - specify a config file (see below)
 --root     - use an alternative root directory
 --template - specify a glob pattern to watch for HTML template changes (see below)
 --env      - a comma separated list of environment variable files to load e.g. .env,.env.local
+
+```
+## Working Directory
+The working directory for `gomon` is the current directory unless:
+1. if a root directory is specified then that is used
+2. otherwise, if a config file is specified then the directory containing the file is used
+3. otherwise, if specified in the config file that is used
+3. otherwise, the current directory is used
+
+## Config files
+If a config file is specified, or one is found in the working directory, then that is used. Command line flags override config file values.
+
+The config file is a YAML file as follows:
+```yaml
+rootDirectory: <path to root>
+entrypoint: <relative path to entry point>
+entrypointArgs: [<list of args>]
+templatePathGlob: <relative path + glob to template directory>
+envFiles:
+  - <env file e.g. .env>
+  - ...
+reloadOnUnhandled: true|false #if true then any file changes (not just .go files) will restart process
 
 ```
 

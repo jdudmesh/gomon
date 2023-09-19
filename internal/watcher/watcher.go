@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
+	"github.com/jdudmesh/gomon/internal/config"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -36,53 +37,15 @@ type HotReloaderOption func(*HotReloader) error
 type HotReloaderCloseFunc func(*HotReloader)
 
 type HotReloader struct {
-	rootDir            string
-	entrypoint         string
-	entrypointArgs     []string
-	envFiles           []string
-	envVars            []string
-	templatePathGlob   string
-	respawnOnUnhandled bool
-	watcher            *fsnotify.Watcher
-	childCmd           *exec.Cmd
-	childCmdClosed     chan bool
-	childLock          sync.Mutex
-	closeFunc          HotReloaderCloseFunc
-	killTimeout        time.Duration // TODO: make configurable
-	isRespawn          atomic.Bool
-}
-
-func WithEntrypoint(path string) HotReloaderOption {
-	return func(r *HotReloader) error {
-		r.entrypoint = path
-		return nil
-	}
-}
-
-func WithEntrypointArgs(args []string) HotReloaderOption {
-	return func(r *HotReloader) error {
-		r.entrypointArgs = args
-		return nil
-	}
-}
-
-func WithEnvFiles(files string) HotReloaderOption {
-	return func(r *HotReloader) error {
-		fileList := strings.Split(files, ",")
-		for _, file := range fileList {
-			if file != "" {
-				r.envFiles = append(r.envFiles, filepath.Join(file))
-			}
-		}
-		return nil
-	}
-}
-
-func WithTemplatePathGlob(path string) HotReloaderOption {
-	return func(r *HotReloader) error {
-		r.templatePathGlob = path
-		return nil
-	}
+	*config.Config
+	envVars        []string
+	watcher        *fsnotify.Watcher
+	childCmd       *exec.Cmd
+	childCmdClosed chan bool
+	childLock      sync.Mutex
+	closeFunc      HotReloaderCloseFunc
+	killTimeout    time.Duration // TODO: make configurable
+	isRespawn      atomic.Bool
 }
 
 func WithCloseFunc(fn HotReloaderCloseFunc) HotReloaderOption {
@@ -92,11 +55,10 @@ func WithCloseFunc(fn HotReloaderCloseFunc) HotReloaderOption {
 	}
 }
 
-func New(opts ...HotReloaderOption) (*HotReloader, error) {
-	var err error
-
+func New(config *config.Config, closeFn HotReloaderCloseFunc, opts ...HotReloaderOption) (*HotReloader, error) {
 	reloader := &HotReloader{
-		envFiles:       []string{},
+		Config:         config,
+		closeFunc:      closeFn,
 		envVars:        os.Environ(),
 		childCmdClosed: make(chan bool, 1),
 		childLock:      sync.Mutex{},
@@ -111,16 +73,11 @@ func New(opts ...HotReloaderOption) (*HotReloader, error) {
 		}
 	}
 
-	if reloader.entrypoint == "" {
+	if reloader.Config.Entrypoint == "" {
 		return nil, fmt.Errorf("An entrypoint is required")
 	}
 
-	reloader.rootDir, err = os.Getwd()
-	if err != nil {
-		return nil, fmt.Errorf("cannot establish root directory: %w", err)
-	}
-
-	for _, file := range reloader.envFiles {
+	for _, file := range reloader.Config.EnvFiles {
 		err := reloader.loadEnvFile(file)
 		if err != nil {
 			return nil, fmt.Errorf("loading env file: %w", err)
@@ -131,6 +88,8 @@ func New(opts ...HotReloaderOption) (*HotReloader, error) {
 }
 
 func (r *HotReloader) Run() error {
+	log.Infof("starting gomon with root directory: %s", r.Config.RootDirectory)
+
 	err := r.watch()
 	if err != nil {
 		return err
@@ -195,7 +154,7 @@ func (r *HotReloader) watch() error {
 
 func (r *HotReloader) processFileChange(event fsnotify.Event) {
 	filePath, _ := filepath.Abs(event.Name)
-	relPath, err := filepath.Rel(r.rootDir, filePath)
+	relPath, err := filepath.Rel(r.Config.RootDirectory, filePath)
 	if err != nil {
 		log.Errorf("failed to get relative path for %s: %+v", filePath, err)
 		relPath = filePath
@@ -207,8 +166,8 @@ func (r *HotReloader) processFileChange(event fsnotify.Event) {
 		return
 	}
 
-	if r.templatePathGlob != "" {
-		if match, _ := filepath.Match(filepath.Join(r.rootDir, r.templatePathGlob), filePath); match {
+	if r.Config.TemplatePathGlob != "" {
+		if match, _ := filepath.Match(filepath.Join(r.Config.RootDirectory, r.Config.TemplatePathGlob), filePath); match {
 			log.Infof("modified template: %s", relPath)
 			err := syscall.Kill(-r.childCmd.Process.Pid, syscall.SIGUSR1)
 			if err != nil {
@@ -218,9 +177,9 @@ func (r *HotReloader) processFileChange(event fsnotify.Event) {
 		}
 	}
 
-	if r.envFiles != nil {
+	if r.Config.EnvFiles != nil {
 		f := filepath.Base(filePath)
-		for _, envFile := range r.envFiles {
+		for _, envFile := range r.Config.EnvFiles {
 			if f == envFile {
 				log.Infof("modified env file: %s", relPath)
 				r.respawnChild()
@@ -229,7 +188,7 @@ func (r *HotReloader) processFileChange(event fsnotify.Event) {
 		}
 	}
 
-	if r.respawnOnUnhandled {
+	if r.Config.ReloadOnUnhandled {
 		log.Infof("modified file: %s", relPath)
 		r.respawnChild()
 		return
@@ -239,7 +198,7 @@ func (r *HotReloader) processFileChange(event fsnotify.Event) {
 }
 
 func (r *HotReloader) watchTree() error {
-	return filepath.Walk(r.rootDir, func(srcPath string, f os.FileInfo, err error) error {
+	return filepath.Walk(r.Config.RootDirectory, func(srcPath string, f os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
@@ -252,13 +211,14 @@ func (r *HotReloader) watchTree() error {
 
 func (r *HotReloader) spawnChild(isRespawn ...bool) {
 	go func() {
-		log.Infof("spawning 'go run %s'", r.entrypoint)
-		args := []string{"run", r.entrypoint}
-		if len(r.entrypointArgs) > 0 {
-			args = append(args, r.entrypointArgs...)
+		log.Infof("spawning 'go run %s'", r.Config.Entrypoint)
+
+		args := []string{"run", r.Config.Entrypoint}
+		if len(r.Config.EntrypointArgs) > 0 {
+			args = append(args, r.Config.EntrypointArgs...)
 		}
 		cmd := exec.Command("go", args...)
-		cmd.Dir = r.rootDir
+		cmd.Dir = r.Config.RootDirectory
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -284,7 +244,7 @@ func (r *HotReloader) spawnChild(isRespawn ...bool) {
 		r.isRespawn.Store(false)
 		err = cmd.Wait()
 		if err != nil {
-			log.Warnf("child process exited: %+v", err)
+			log.Warnf("child process exited abnormally: %+v", err)
 		}
 	}()
 }

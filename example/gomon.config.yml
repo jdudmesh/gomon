@@ -1,0 +1,8 @@
+rootDirectory: ~/Develop/example
+entrypoint: ./cmd/main.go
+entrypointArgs: ["--somearg", "somevalue"]
+templatePathGlob: ./templates
+envFiles:
+  - .env
+  - .env.local
+reloadOnUnhandled: true

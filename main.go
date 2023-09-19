@@ -20,14 +20,17 @@ import (
 	"flag"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 
+	"github.com/jdudmesh/gomon/internal/config"
 	"github.com/jdudmesh/gomon/internal/watcher"
 	log "github.com/sirupsen/logrus"
 )
 
 func main() {
+	var configPath string
 	var rootDirectory string
 	var entrypoint string
 	var entrypointArgs []string
@@ -36,38 +39,65 @@ func main() {
 
 	quit := make(chan bool)
 
-	curDir, err := os.Getwd()
-	if err != nil {
-		panic(err)
-	}
-
 	fs := flag.NewFlagSet("gomon flags", flag.ExitOnError)
-	fs.StringVar(&rootDirectory, "root", curDir, "The root directory to watch")
+	fs.StringVar(&configPath, "config", "", "Path to a config file (gomon.config.yml))")
+	fs.StringVar(&rootDirectory, "root", "", "The root directory to watch")
 	fs.StringVar(&templatePathGlob, "template", "", "The template path to watch. Should be a glob pattern")
 	fs.StringVar(&envFiles, "env", "", "A comma separated list of env files to load")
-	err = fs.Parse(os.Args[1:])
+	err := fs.Parse(os.Args[1:])
 	if err != nil {
 		log.Fatalf("parsing flags: %v", err)
-	}
-
-	err = os.Chdir(rootDirectory)
-	if err != nil {
-		log.Fatalf("Cannot set working directory: %v", err)
 	}
 
 	args := strings.Split(fs.Arg(0), " ")
 	entrypoint = args[0]
 	entrypointArgs = args[1:]
 
-	w, err := watcher.New(
-		watcher.WithEntrypoint(entrypoint),
-		watcher.WithEntrypointArgs(entrypointArgs),
-		watcher.WithTemplatePathGlob(templatePathGlob),
-		watcher.WithEnvFiles(envFiles),
-		watcher.WithCloseFunc(func(w *watcher.HotReloader) {
+	if rootDirectory == "" {
+		// if no root directory is specified, use the directory of the config file or fallback to the current directory
+		if configPath != "" {
+			rootDirectory = filepath.Base(configPath)
+		} else {
+			curDir, err := os.Getwd()
+			if err != nil {
+				panic(err)
+			}
+			rootDirectory = curDir
+		}
+	}
+
+	config, err := config.New(configPath, rootDirectory)
+	if err != nil {
+		log.Fatalf("loading config: %v", err)
+	}
+
+	if entrypoint != "" {
+		config.Entrypoint = entrypoint
+	}
+
+	if len(entrypointArgs) > 0 {
+		config.EntrypointArgs = entrypointArgs
+	}
+
+	if templatePathGlob != "" {
+		config.TemplatePathGlob = templatePathGlob
+	}
+
+	if envFiles != "" {
+		config.EnvFiles = strings.Split(envFiles, ",")
+	}
+
+	err = os.Chdir(config.RootDirectory)
+	if err != nil {
+		log.Fatalf("Cannot set working directory: %v", err)
+	}
+
+	w, err := watcher.New(config,
+		func(w *watcher.HotReloader) {
 			quit <- true
-		}),
+		},
 	)
+
 	if err != nil {
 		log.Fatalf("creating monitor: %v", err)
 	}
@@ -89,5 +119,4 @@ func main() {
 	case <-quit:
 		log.Info("received quit, exiting")
 	}
-
 }
