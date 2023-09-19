@@ -35,6 +35,12 @@ type Config struct {
 	TemplatePathGlob  string   `yaml:"templatePathGlob"`
 	EnvFiles          []string `yaml:"envFiles"`
 	ReloadOnUnhandled bool     `yaml:"reloadOnUnhandled"`
+	Proxy             struct {
+		Enabled        bool `yaml:"enabled"`
+		Port           int  `yaml:"port"`
+		DownstreamPort int  `yaml:"downstreamPort"`
+		Timeout        int  `yaml:"timeout"`
+	} `yaml:"proxy"`
 }
 
 func New(configPath, rootDirectory string) (*Config, error) {
@@ -50,6 +56,7 @@ func New(configPath, rootDirectory string) (*Config, error) {
 		return config, nil
 	}
 
+	log.Infof("loading config from %s", filename)
 	f, err := os.Open(filename)
 	if err != nil {
 		return nil, fmt.Errorf("opening config file: %w", err)

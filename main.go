@@ -25,6 +25,7 @@ import (
 	"syscall"
 
 	"github.com/jdudmesh/gomon/internal/config"
+	"github.com/jdudmesh/gomon/internal/proxy"
 	"github.com/jdudmesh/gomon/internal/watcher"
 	log "github.com/sirupsen/logrus"
 )
@@ -92,7 +93,7 @@ func main() {
 		log.Fatalf("Cannot set working directory: %v", err)
 	}
 
-	w, err := watcher.New(config,
+	w, err := watcher.New(*config,
 		func(w *watcher.HotReloader) {
 			quit <- true
 		},
@@ -106,6 +107,22 @@ func main() {
 	err = w.Run()
 	if err != nil {
 		log.Fatalf("running monitor: %v", err)
+	}
+
+	proxy, err := proxy.New(*config)
+	if err != nil {
+		log.Fatalf("creating proxy: %v", err)
+	}
+	defer func() {
+		err := proxy.Stop()
+		if err != nil {
+			log.Fatalf("stopping proxy: %v", err)
+		}
+	}()
+
+	err = proxy.Start()
+	if err != nil {
+		log.Fatalf("starting proxy: %v", err)
 	}
 
 	pid := os.Getpid()

@@ -37,7 +37,7 @@ type HotReloaderOption func(*HotReloader) error
 type HotReloaderCloseFunc func(*HotReloader)
 
 type HotReloader struct {
-	*config.Config
+	config.Config
 	envVars        []string
 	watcher        *fsnotify.Watcher
 	childCmd       *exec.Cmd
@@ -55,7 +55,7 @@ func WithCloseFunc(fn HotReloaderCloseFunc) HotReloaderOption {
 	}
 }
 
-func New(config *config.Config, closeFn HotReloaderCloseFunc, opts ...HotReloaderOption) (*HotReloader, error) {
+func New(config config.Config, closeFn HotReloaderCloseFunc, opts ...HotReloaderOption) (*HotReloader, error) {
 	reloader := &HotReloader{
 		Config:         config,
 		closeFunc:      closeFn,
