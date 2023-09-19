@@ -10,7 +10,7 @@ There was a previous [approach to this problem](https://github.com/jdudmesh/hotr
 ## Installation
 Install the tool as follows:
 ```bash
-go install https://github.com/jdudmesh/gomon@latest
+go install github.com/jdudmesh/gomon@latest
 ```
 
 ## Basic Usage
