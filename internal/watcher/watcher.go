@@ -195,16 +195,21 @@ func (r *HotReloader) watch() error {
 
 func (r *HotReloader) processFileChange(event fsnotify.Event) {
 	filePath, _ := filepath.Abs(event.Name)
+	relPath, err := filepath.Rel(r.rootDir, filePath)
+	if err != nil {
+		log.Errorf("failed to get relative path for %s: %+v", filePath, err)
+		relPath = filePath
+	}
 
 	if strings.HasSuffix(filePath, "go") { // TODO: make configurable
-		log.Infof("modified Go file: %s", filePath)
+		log.Infof("modified Go file: %s", relPath)
 		r.respawnChild()
 		return
 	}
 
 	if r.templatePathGlob != "" {
 		if match, _ := filepath.Match(filepath.Join(r.rootDir, r.templatePathGlob), filePath); match {
-			log.Infof("modified template: %s", filePath)
+			log.Infof("modified template: %s", relPath)
 			err := syscall.Kill(-r.childCmd.Process.Pid, syscall.SIGUSR1)
 			if err != nil {
 				log.Errorf("sending SIGUSR1 to child process: %+v", err)
@@ -217,7 +222,7 @@ func (r *HotReloader) processFileChange(event fsnotify.Event) {
 		f := filepath.Base(filePath)
 		for _, envFile := range r.envFiles {
 			if f == envFile {
-				log.Infof("modified env file: %s", filePath)
+				log.Infof("modified env file: %s", relPath)
 				r.respawnChild()
 				return
 			}
@@ -225,12 +230,12 @@ func (r *HotReloader) processFileChange(event fsnotify.Event) {
 	}
 
 	if r.respawnOnUnhandled {
-		log.Infof("modified file: %s", filePath)
+		log.Infof("modified file: %s", relPath)
 		r.respawnChild()
 		return
 	}
 
-	log.Infof("unhandled modified file: %s", filePath)
+	log.Infof("unhandled modified file: %s", relPath)
 }
 
 func (r *HotReloader) watchTree() error {

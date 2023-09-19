@@ -9,11 +9,14 @@ There was a previous [approach to this problem](https://github.com/jdudmesh/hotr
 
 ## Installation
 Install the tool as follows:
+```bash
+go install https://github.com/jdudmesh/gomon@latest
+```
 
 ## Basic Usage
 In your project directory run:
 
-```
+```bash
 gomon <path to main.go>
 ```
 
@@ -31,47 +34,47 @@ If your project contains Go HTML templates then you can reload them by using the
 For example:
 ```go
 type Template struct {
-	templates *template.Template
+templates *template.Template
 }
 
 func (t *Template) Render(w io.Writer, name string, data interface{}, c echo.Context) error {
-	return t.templates.ExecuteTemplate(w, name, data)
+  return t.templates.ExecuteTemplate(w, name, data)
 }
 
 func main() {
-	e := echo.New()
-	e.Static("/assets", "./static")
+  e := echo.New()
+  e.Static("/assets", "./static")
 
-	t := &Template{
-		templates: template.Must(template.ParseGlob("views/*.html")),
-	}
-	e.Renderer = t
+  t := &Template{
+    templates: template.Must(template.ParseGlob("views/*.html")),
+  }
+  e.Renderer = t
 
-	quit := make(chan bool)
-	go func() {
-		sigint := make(chan os.Signal, 1)
-		signal.Notify(sigint, syscall.SIGUSR1)
-		for {
-			select {
-			case <-sigint:
-				fmt.Println("Reloading templates...")
-				t.templates = template.Must(template.ParseGlob("views/*.html"))
-			case <-quit:
-				return
-			}
-		}
-	}()
+  quit := make(chan bool)
+  go func() {
+    sigint := make(chan os.Signal, 1)
+    signal.Notify(sigint, syscall.SIGUSR1)
+    for {
+      select {
+      case <-sigint:
+        fmt.Println("Reloading templates...")
+        t.templates = template.Must(template.ParseGlob("views/*.html"))
+      case <-quit:
+        return
+      }
+    }
+  }()
 
-	e.GET("/", func(c echo.Context) error {
-		return c.Render(http.StatusOK, "index.html", nil)
-	})
+  e.GET("/", func(c echo.Context) error {
+    return c.Render(http.StatusOK, "index.html", nil)
+  })
 
-	if p, ok := os.LookupEnv("PORT"); ok {
-		e.Logger.Fatal(e.Start(":" + p))
-	} else {
-		e.Logger.Fatal(e.Start(":8080"))
-	}
-	quit <- true
+  if p, ok := os.LookupEnv("PORT"); ok {
+    e.Logger.Fatal(e.Start(":" + p))
+  } else {
+    e.Logger.Fatal(e.Start(":8080"))
+  }
+  quit <- true
 }
 ```
 
@@ -85,23 +88,24 @@ import (
 )
 
 func main() {
-	e := echo.New()
-	e.Static("/assets", "./static")
+  e := echo.New()
+  e.Static("/assets", "./static")
 
-	t, closeFn := templates.NewEcho("views/*.html")
+  t, closeFn := templates.NewEcho("views/*.html")
   defer closeFn()
-	e.Renderer = t
+  e.Renderer = t
 
-	e.GET("/", func(c echo.Context) error {
-		return c.Render(http.StatusOK, "index.html", nil)
-	})
+  e.GET("/", func(c echo.Context) error {
+    return c.Render(http.StatusOK, "index.html", nil)
+  })
 
-	if p, ok := os.LookupEnv("PORT"); ok {
-		e.Logger.Fatal(e.Start(":" + p))
-	} else {
-		e.Logger.Fatal(e.Start(":8080"))
-	}
-	quit <- true
+  if p, ok := os.LookupEnv("PORT"); ok {
+    e.Logger.Fatal(e.Start(":" + p))
+  } else {
+    e.Logger.Fatal(e.Start(":8080"))
+  }
+
+  quit <- true
 }
 ```
 
