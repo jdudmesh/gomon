@@ -36,10 +36,18 @@ type Config struct {
 	EnvFiles          []string `yaml:"envFiles"`
 	ReloadOnUnhandled bool     `yaml:"reloadOnUnhandled"`
 	Proxy             struct {
-		Enabled        bool `yaml:"enabled"`
-		Port           int  `yaml:"port"`
-		DownstreamPort int  `yaml:"downstreamPort"`
-		Timeout        int  `yaml:"timeout"`
+		Enabled    bool `yaml:"enabled"`
+		Port       int  `yaml:"port"`
+		Downstream struct {
+			Host    string `yaml:"host"`
+			Timeout int    `yaml:"timeout"`
+		} `yaml:"downstream"`
+		FrontendDevServer struct {
+			Host    string `yaml:"host"`
+			Timeout int    `yaml:"timeout"`
+			Route   string `yaml:"route"`
+			Inject  string `yaml:"inject"`
+		} `yaml:"frontendDevServer"`
 	} `yaml:"proxy"`
 }
 
