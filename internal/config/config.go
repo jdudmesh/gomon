@@ -29,25 +29,20 @@ import (
 const defaultConfigFileName = "gomon.config.yml"
 
 type Config struct {
-	RootDirectory     string   `yaml:"rootDirectory"`
-	Entrypoint        string   `yaml:"entrypoint"`
-	EntrypointArgs    []string `yaml:"entrypointArgs"`
-	TemplatePathGlob  string   `yaml:"templatePathGlob"`
-	EnvFiles          []string `yaml:"envFiles"`
-	ReloadOnUnhandled bool     `yaml:"reloadOnUnhandled"`
-	Proxy             struct {
+	RootDirectory  string   `yaml:"rootDirectory"`
+	Entrypoint     string   `yaml:"entrypoint"`
+	EntrypointArgs []string `yaml:"entrypointArgs"`
+	EnvFiles       []string `yaml:"envFiles"`
+	HardReload     []string `yaml:"hardReload"`
+	SoftReload     []string `yaml:"softReload"`
+	ExludePaths    []string `yaml:"excludePaths"`
+	Proxy          struct {
 		Enabled    bool `yaml:"enabled"`
 		Port       int  `yaml:"port"`
 		Downstream struct {
 			Host    string `yaml:"host"`
 			Timeout int    `yaml:"timeout"`
 		} `yaml:"downstream"`
-		FrontendDevServer struct {
-			Host    string `yaml:"host"`
-			Timeout int    `yaml:"timeout"`
-			Route   string `yaml:"route"`
-			Inject  string `yaml:"inject"`
-		} `yaml:"frontendDevServer"`
 	} `yaml:"proxy"`
 }
 

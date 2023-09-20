@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"path"
 	"strings"
 	"time"
 
@@ -22,9 +21,6 @@ const gomonInjectCode = `
 		window.location.reload();
 	};
 </script>`
-
-const viteInjectCode = `
-	<script type="module" src="%s"></script>`
 
 const headTag = `<head>`
 
@@ -65,34 +61,10 @@ func (p *Proxy) initProxy() error {
 		p.Proxy.Downstream.Timeout = 5
 	}
 
-	b := strings.Builder{}
-	b.WriteString(gomonInjectCode)
-
-	if p.Proxy.FrontendDevServer.Host != "" {
-		if p.Proxy.FrontendDevServer.Timeout == 0 {
-			p.Proxy.FrontendDevServer.Timeout = 5
-		}
-
-		if p.Proxy.FrontendDevServer.Route == "" {
-			return errors.New("route is required for front end dev servers like Vite")
-		}
-
-		if p.Proxy.FrontendDevServer.Inject == "" {
-			log.Warn("No inject method specified for front end dev server. Defaulting to Vite.")
-			p.Proxy.FrontendDevServer.Inject = "vite"
-		}
-
-		switch strings.ToLower(p.Proxy.FrontendDevServer.Inject) {
-		case "vite":
-			b.WriteString(fmt.Sprintf(viteInjectCode, path.Join(p.Proxy.FrontendDevServer.Route, "/@vite/client")))
-		}
-	}
-
-	p.injectCode = b.String()
+	p.injectCode = gomonInjectCode
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/__gomon__/reload", p.handleReload)
-	mux.HandleFunc(p.Proxy.FrontendDevServer.Route, p.handleFrontEndServer)
 	mux.HandleFunc("/", p.handleDefault)
 
 	p.server = &http.Server{
@@ -120,11 +92,6 @@ func (p *Proxy) Start() error {
 func (p *Proxy) handleReload(res http.ResponseWriter, req *http.Request) {
 	log.Infof("reloading proxy")
 	res.WriteHeader(http.StatusOK)
-}
-
-func (p *Proxy) handleFrontEndServer(res http.ResponseWriter, req *http.Request) {
-	duration := time.Duration(p.Proxy.FrontendDevServer.Timeout) * time.Second // TODO: calculate at startup
-	p.proxyRequest(res, req, p.Proxy.FrontendDevServer.Host, duration, "")
 }
 
 func (p *Proxy) handleDefault(res http.ResponseWriter, req *http.Request) {
@@ -200,10 +167,27 @@ func (p *Proxy) proxyRequest(res http.ResponseWriter, req *http.Request, host st
 			}
 
 			if match {
+				cutPos := ix + len(headTag)
 				// we have a match, inject the code
-				res.Write(buffer[:ix])
-				res.Write([]byte(injectCode))
-				res.Write(buffer[:ix])
+				_, err = res.Write(buffer[:cutPos])
+				if err != nil {
+					log.Errorf("writing response: %v", err)
+					http.Error(res, err.Error(), http.StatusInternalServerError)
+					return
+				}
+				log.Infof(string(injectCode))
+				_, err = res.Write([]byte(injectCode))
+				if err != nil {
+					log.Errorf("writing response: %v", err)
+					http.Error(res, err.Error(), http.StatusInternalServerError)
+					return
+				}
+				_, err = res.Write(buffer[cutPos:])
+				if err != nil {
+					log.Errorf("writing response: %v", err)
+					http.Error(res, err.Error(), http.StatusInternalServerError)
+					return
+				}
 				break
 			}
 		}
@@ -212,7 +196,12 @@ func (p *Proxy) proxyRequest(res http.ResponseWriter, req *http.Request, host st
 	}
 
 	if !match {
-		res.Write(buffer)
+		_, err = res.Write(buffer)
+		if err != nil {
+			log.Errorf("writing response: %v", err)
+			http.Error(res, err.Error(), http.StatusInternalServerError)
+			return
+		}
 	}
 }
 

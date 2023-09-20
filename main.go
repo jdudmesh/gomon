@@ -80,8 +80,12 @@ func main() {
 		config.EntrypointArgs = entrypointArgs
 	}
 
-	if templatePathGlob != "" {
-		config.TemplatePathGlob = templatePathGlob
+	if len(config.HardReload) == 0 {
+		config.HardReload = []string{"*.go", "go.mod", "go.sum"}
+	}
+
+	if len(config.ExludePaths) == 0 {
+		config.ExludePaths = []string{"vendor"}
 	}
 
 	if envFiles != "" {

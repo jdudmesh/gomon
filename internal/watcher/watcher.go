@@ -29,9 +29,13 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
+	ipc "github.com/james-barrow/golang-ipc"
 	"github.com/jdudmesh/gomon/internal/config"
 	log "github.com/sirupsen/logrus"
 )
+
+const msgTypeReload = 1
+const msgTypeReloaded = 2
 
 type HotReloaderOption func(*HotReloader) error
 type HotReloaderCloseFunc func(*HotReloader)
@@ -40,12 +44,14 @@ type HotReloader struct {
 	config.Config
 	envVars        []string
 	watcher        *fsnotify.Watcher
-	childCmd       *exec.Cmd
+	childCmd       atomic.Value
 	childCmdClosed chan bool
 	childLock      sync.Mutex
+	closeLock      sync.Mutex
 	closeFunc      HotReloaderCloseFunc
 	killTimeout    time.Duration // TODO: make configurable
-	isRespawn      atomic.Bool
+	isRespawning   atomic.Bool
+	ipcServer      *ipc.Server
 }
 
 func WithCloseFunc(fn HotReloaderCloseFunc) HotReloaderOption {
@@ -62,8 +68,9 @@ func New(config config.Config, closeFn HotReloaderCloseFunc, opts ...HotReloader
 		envVars:        os.Environ(),
 		childCmdClosed: make(chan bool, 1),
 		childLock:      sync.Mutex{},
+		closeLock:      sync.Mutex{},
 		killTimeout:    5 * time.Second,
-		isRespawn:      atomic.Bool{},
+		isRespawning:   atomic.Bool{},
 	}
 
 	for _, opt := range opts {
@@ -88,9 +95,18 @@ func New(config config.Config, closeFn HotReloaderCloseFunc, opts ...HotReloader
 }
 
 func (r *HotReloader) Run() error {
+	var err error
 	log.Infof("starting gomon with root directory: %s", r.Config.RootDirectory)
 
-	err := r.watch()
+	r.isRespawning.Store(false)
+
+	r.ipcServer, err = ipc.StartServer("gomon", nil)
+	if err != nil {
+		return fmt.Errorf("ipc server: %w", err)
+	}
+	r.handleIPC()
+
+	err = r.watch()
 	if err != nil {
 		return err
 	}
@@ -109,12 +125,30 @@ func (r *HotReloader) Close() error {
 		}
 	}
 
+	r.ipcServer.Close()
+
 	err := r.closeChild()
 	if err != nil {
 		return fmt.Errorf("terminating child process: %w", err)
 	}
 
 	return nil
+}
+
+func (r *HotReloader) handleIPC() {
+	go func() {
+		for {
+			msg, err := r.ipcServer.Read()
+			if err != nil {
+				log.Errorf("ipc read: %+v", err)
+				if msg.MsgType == msgTypeReloaded {
+					if !r.isRespawning.Load() {
+						r.respawnChild()
+					}
+				}
+			}
+		}
+	}()
 }
 
 func (r *HotReloader) watch() error {
@@ -160,19 +194,25 @@ func (r *HotReloader) processFileChange(event fsnotify.Event) {
 		relPath = filePath
 	}
 
-	if strings.HasSuffix(filePath, "go") { // TODO: make configurable
-		log.Infof("modified Go file: %s", relPath)
-		r.respawnChild()
-		return
+	for _, exclude := range r.Config.ExludePaths {
+		if strings.HasPrefix(relPath, exclude) {
+			log.Infof("excluded file: %s", relPath)
+			return
+		}
 	}
 
-	if r.Config.TemplatePathGlob != "" {
-		if match, _ := filepath.Match(filepath.Join(r.Config.RootDirectory, r.Config.TemplatePathGlob), filePath); match {
-			log.Infof("modified template: %s", relPath)
-			err := syscall.Kill(-r.childCmd.Process.Pid, syscall.SIGUSR1)
-			if err != nil {
-				log.Errorf("sending SIGUSR1 to child process: %+v", err)
-			}
+	for _, hard := range r.Config.HardReload {
+		if match, _ := filepath.Match(hard, filepath.Base(filePath)); match {
+			log.Infof("hard reload: %s", relPath)
+			r.respawnChild()
+			return
+		}
+	}
+
+	for _, soft := range r.Config.SoftReload {
+		if match, _ := filepath.Match(soft, filepath.Base(filePath)); match {
+			log.Infof("soft reload: %s", relPath)
+			r.ipcServer.Write(msgTypeReload, []byte(relPath))
 			return
 		}
 	}
@@ -186,12 +226,6 @@ func (r *HotReloader) processFileChange(event fsnotify.Event) {
 				return
 			}
 		}
-	}
-
-	if r.Config.ReloadOnUnhandled {
-		log.Infof("modified file: %s", relPath)
-		r.respawnChild()
-		return
 	}
 
 	log.Infof("unhandled modified file: %s", relPath)
@@ -209,8 +243,16 @@ func (r *HotReloader) watchTree() error {
 	})
 }
 
-func (r *HotReloader) spawnChild(isRespawn ...bool) {
+func (r *HotReloader) spawnChild() {
 	go func() {
+		r.childLock.Lock()
+		defer r.childLock.Unlock()
+
+		if r.getChildCmd() != nil {
+			log.Warn("child process already running")
+			return
+		}
+
 		log.Infof("spawning 'go run %s'", r.Config.Entrypoint)
 
 		args := []string{"run", r.Config.Entrypoint}
@@ -223,16 +265,8 @@ func (r *HotReloader) spawnChild(isRespawn ...bool) {
 		cmd.Stderr = os.Stderr
 		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 		cmd.Env = r.envVars
-		r.setChild(cmd)
 
-		defer func() {
-			r.setChild(nil)
-
-			r.childCmdClosed <- true
-			if !r.isRespawn.Load() && r.closeFunc != nil {
-				r.closeFunc(r)
-			}
-		}()
+		r.setChildCmd(cmd)
 
 		err := cmd.Start()
 		if err != nil {
@@ -240,17 +274,27 @@ func (r *HotReloader) spawnChild(isRespawn ...bool) {
 			return
 		}
 
-		log.Infof("child process started (pid: %d)", r.childCmd.Process.Pid)
-		r.isRespawn.Store(false)
+		log.Infof("child process started (pid: %d)", cmd.Process.Pid)
+
 		err = cmd.Wait()
-		if err != nil {
+		if err != nil && !(err.Error() != "signal: terminated" || err.Error() != "signal: killed") {
 			log.Warnf("child process exited abnormally: %+v", err)
 		}
+		r.setChildCmd(nil)
+		r.childCmdClosed <- true
+
+		exitStatus := cmd.ProcessState.ExitCode()
+		if exitStatus > 0 && r.closeFunc != nil {
+			r.closeFunc(r)
+		}
+
+		r.isRespawning.Store(false)
 	}()
 }
 
 func (r *HotReloader) respawnChild() {
-	r.isRespawn.Store(true)
+	r.isRespawning.Store(true)
+
 	err := r.closeChild()
 	if err != nil {
 		log.Errorf("closing child process: %+v", err)
@@ -260,41 +304,41 @@ func (r *HotReloader) respawnChild() {
 }
 
 func (r *HotReloader) closeChild() error {
-	if r.getChild() != nil {
-		log.Info("terminating child process")
-		err := syscall.Kill(-r.childCmd.Process.Pid, syscall.SIGTERM)
-		if err != nil {
-			return err
-		}
-		select {
-		case <-r.childCmdClosed:
-			log.Info("child process closed")
-		case <-time.After(r.killTimeout):
-			cmd := r.getChild()
-			if cmd != nil {
-				log.Warn("child process did not shut down gracefully, killing it")
-				err = cmd.Process.Kill()
-				if err != nil {
-					return fmt.Errorf("killing child process: %w", err)
-				}
+	r.closeLock.Lock()
+	defer r.closeLock.Unlock()
+
+	cmd := r.getChildCmd()
+	if cmd == nil {
+		return nil
+	}
+
+	if cmd.Process == nil {
+		return nil
+	}
+
+	log.Info("terminating child process")
+	// calling syscall.Kill with a negative pid sends the signal to the entire process group
+	// including the child process and any of its children
+	err := syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
+	if err != nil {
+		return err
+	}
+
+	select {
+	case <-r.childCmdClosed:
+		log.Info("child process closed")
+	case <-time.After(r.killTimeout):
+		cmd = r.getChildCmd()
+		if cmd != nil {
+			log.Warn("child process did not shut down gracefully, killing it")
+			err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+			if err != nil && err.Error() != "os: process already finished" {
+				return fmt.Errorf("killing child process: %w", err)
 			}
 		}
 	}
+
 	return nil
-}
-
-func (r *HotReloader) getChild() *exec.Cmd {
-	r.childLock.Lock()
-	defer r.childLock.Unlock()
-
-	return r.childCmd
-}
-
-func (r *HotReloader) setChild(cmd *exec.Cmd) {
-	r.childLock.Lock()
-	defer r.childLock.Unlock()
-
-	r.childCmd = cmd
 }
 
 func (r *HotReloader) loadEnvFile(filename string) error {
@@ -323,4 +367,16 @@ func (r *HotReloader) loadEnvFile(filename string) error {
 	}
 
 	return nil
+}
+
+func (r *HotReloader) getChildCmd() *exec.Cmd {
+	if cmd, ok := r.childCmd.Load().(*exec.Cmd); !ok {
+		return nil
+	} else {
+		return cmd
+	}
+}
+
+func (r *HotReloader) setChildCmd(cmd *exec.Cmd) {
+	r.childCmd.Store(cmd)
 }
