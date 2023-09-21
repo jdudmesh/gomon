@@ -206,6 +206,9 @@ func (p *Proxy) proxyRequest(res http.ResponseWriter, req *http.Request, host st
 }
 
 func (p *Proxy) Stop() error {
-	p.server.Shutdown(context.Background())
-	return nil
+	return p.server.Shutdown(context.Background())
+}
+
+func (p *Proxy) Notify(msg string) {
+	log.Infof("notifying browser: %s", msg)
 }

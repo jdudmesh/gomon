@@ -97,22 +97,6 @@ func main() {
 		log.Fatalf("Cannot set working directory: %v", err)
 	}
 
-	w, err := watcher.New(*config,
-		func(w *watcher.HotReloader) {
-			quit <- true
-		},
-	)
-
-	if err != nil {
-		log.Fatalf("creating monitor: %v", err)
-	}
-	defer w.Close()
-
-	err = w.Run()
-	if err != nil {
-		log.Fatalf("running monitor: %v", err)
-	}
-
 	proxy, err := proxy.New(*config)
 	if err != nil {
 		log.Fatalf("creating proxy: %v", err)
@@ -127,6 +111,23 @@ func main() {
 	err = proxy.Start()
 	if err != nil {
 		log.Fatalf("starting proxy: %v", err)
+	}
+
+	w, err := watcher.New(*config,
+		func(w *watcher.HotReloader) {
+			quit <- true
+		},
+		watcher.WithBrowserNotifier(proxy),
+	)
+
+	if err != nil {
+		log.Fatalf("creating monitor: %v", err)
+	}
+	defer w.Close()
+
+	err = w.Run()
+	if err != nil {
+		log.Fatalf("running monitor: %v", err)
 	}
 
 	pid := os.Getpid()

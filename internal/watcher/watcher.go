@@ -29,34 +29,46 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
+	"github.com/google/uuid"
 	ipc "github.com/james-barrow/golang-ipc"
 	"github.com/jdudmesh/gomon/internal/config"
+	gomonclient "github.com/jdudmesh/gomon/pkg/client"
 	log "github.com/sirupsen/logrus"
 )
 
-const msgTypeReload = 1
-const msgTypeReloaded = 2
+type BrowserNotifier interface {
+	Notify(string)
+}
 
 type HotReloaderOption func(*HotReloader) error
 type HotReloaderCloseFunc func(*HotReloader)
 
 type HotReloader struct {
 	config.Config
-	envVars        []string
-	watcher        *fsnotify.Watcher
-	childCmd       atomic.Value
-	childCmdClosed chan bool
-	childLock      sync.Mutex
-	closeLock      sync.Mutex
-	closeFunc      HotReloaderCloseFunc
-	killTimeout    time.Duration // TODO: make configurable
-	isRespawning   atomic.Bool
-	ipcServer      *ipc.Server
+	envVars         []string
+	watcher         *fsnotify.Watcher
+	childCmd        atomic.Value
+	childCmdClosed  chan bool
+	childLock       sync.Mutex
+	closeLock       sync.Mutex
+	closeFunc       HotReloaderCloseFunc
+	killTimeout     time.Duration // TODO: make configurable
+	isRespawning    atomic.Bool
+	ipcServer       *ipc.Server
+	ipcChannel      string
+	browserNotifier BrowserNotifier
 }
 
 func WithCloseFunc(fn HotReloaderCloseFunc) HotReloaderOption {
 	return func(r *HotReloader) error {
 		r.closeFunc = fn
+		return nil
+	}
+}
+
+func WithBrowserNotifier(n BrowserNotifier) HotReloaderOption {
+	return func(r *HotReloader) error {
+		r.browserNotifier = n
 		return nil
 	}
 }
@@ -71,6 +83,7 @@ func New(config config.Config, closeFn HotReloaderCloseFunc, opts ...HotReloader
 		closeLock:      sync.Mutex{},
 		killTimeout:    5 * time.Second,
 		isRespawning:   atomic.Bool{},
+		ipcChannel:     "gomon-" + uuid.New().String(),
 	}
 
 	for _, opt := range opts {
@@ -91,6 +104,8 @@ func New(config config.Config, closeFn HotReloaderCloseFunc, opts ...HotReloader
 		}
 	}
 
+	reloader.envVars = append(reloader.envVars, fmt.Sprintf("GOMON_IPC_CHANNEL=%s", reloader.ipcChannel))
+
 	return reloader, nil
 }
 
@@ -100,11 +115,10 @@ func (r *HotReloader) Run() error {
 
 	r.isRespawning.Store(false)
 
-	r.ipcServer, err = ipc.StartServer("gomon", nil)
+	err = r.runIPCServer()
 	if err != nil {
-		return fmt.Errorf("ipc server: %w", err)
+		return err
 	}
-	r.handleIPC()
 
 	err = r.watch()
 	if err != nil {
@@ -135,20 +149,36 @@ func (r *HotReloader) Close() error {
 	return nil
 }
 
-func (r *HotReloader) handleIPC() {
+func (r *HotReloader) runIPCServer() error {
+	var err error
+	r.ipcServer, err = ipc.StartServer(r.ipcChannel, nil)
+	if err != nil {
+		return fmt.Errorf("ipc server: %w", err)
+	}
+
 	go func() {
 		for {
 			msg, err := r.ipcServer.Read()
 			if err != nil {
 				log.Errorf("ipc read: %+v", err)
-				if msg.MsgType == msgTypeReloaded {
-					if !r.isRespawning.Load() {
-						r.respawnChild()
-					}
+				continue
+			}
+			switch msg.MsgType {
+			case gomonclient.MsgTypeReloaded:
+			case gomonclient.MsgTypePing:
+				if r.browserNotifier != nil {
+					data := string(msg.Data)
+					r.browserNotifier.Notify(data)
 				}
+			case -1:
+				log.Debugf("Internal message received: %+v", msg)
+			default:
+				log.Warnf("unhandled ipc message type: %d", msg.MsgType)
 			}
 		}
 	}()
+
+	return nil
 }
 
 func (r *HotReloader) watch() error {
@@ -212,7 +242,10 @@ func (r *HotReloader) processFileChange(event fsnotify.Event) {
 	for _, soft := range r.Config.SoftReload {
 		if match, _ := filepath.Match(soft, filepath.Base(filePath)); match {
 			log.Infof("soft reload: %s", relPath)
-			r.ipcServer.Write(msgTypeReload, []byte(relPath))
+			err := r.ipcServer.Write(gomonclient.MsgTypeReload, []byte(relPath))
+			if err != nil {
+				log.Errorf("ipc write: %+v", err)
+			}
 			return
 		}
 	}
@@ -273,8 +306,6 @@ func (r *HotReloader) spawnChild() {
 			log.Errorf("spawning child process: %+v", err)
 			return
 		}
-
-		log.Infof("child process started (pid: %d)", cmd.Process.Pid)
 
 		err = cmd.Wait()
 		if err != nil && !(err.Error() != "signal: terminated" || err.Error() != "signal: killed") {
