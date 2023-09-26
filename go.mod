@@ -7,6 +7,7 @@ require (
 	github.com/google/uuid v1.3.1
 	github.com/james-barrow/golang-ipc v1.2.4
 	github.com/jdudmesh/gomon/pkg/client v0.0.0-00010101000000-000000000000
+	github.com/r3labs/sse/v2 v2.10.0
 	github.com/sirupsen/logrus v1.9.3
 	gopkg.in/yaml.v3 v3.0.1
 )
@@ -25,6 +26,7 @@ require (
 	golang.org/x/sys v0.12.0 // indirect
 	golang.org/x/text v0.11.0 // indirect
 	golang.org/x/tools v0.9.1 // indirect
+	gopkg.in/cenkalti/backoff.v1 v1.1.0 // indirect
 )
 
 replace github.com/jdudmesh/gomon/pkg/client => ../gomon-client

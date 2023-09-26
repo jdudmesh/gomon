@@ -10,14 +10,16 @@ import (
 	"time"
 
 	"github.com/jdudmesh/gomon/internal/config"
+	"github.com/r3labs/sse/v2"
 	log "github.com/sirupsen/logrus"
 )
 
 const gomonInjectCode = `
-	<script>
-	const source = new EventSource('/__gomon__/reload');
+<script>
+	const source = new EventSource('/__gomon__/events?stream=hmr');
 	source.onmessage = function (event) {
-		console.log('reloading...');
+		console.log('reloading...', event);
+		source.close();
 		window.location.reload();
 	};
 </script>`
@@ -26,7 +28,8 @@ const headTag = `<head>`
 
 type Proxy struct {
 	config.Config
-	server     *http.Server
+	httpServer *http.Server
+	sseServer  *sse.Server
 	injectCode string
 }
 
@@ -63,11 +66,16 @@ func (p *Proxy) initProxy() error {
 
 	p.injectCode = gomonInjectCode
 
+	p.sseServer = sse.New()
+	p.sseServer.AutoReplay = false
+	p.sseServer.CreateStream("hmr")
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/__gomon__/reload", p.handleReload)
+	mux.HandleFunc("/__gomon__/events", p.sseServer.ServeHTTP)
 	mux.HandleFunc("/", p.handleDefault)
 
-	p.server = &http.Server{
+	p.httpServer = &http.Server{
 		Addr:    fmt.Sprintf(":%d", p.Proxy.Port),
 		Handler: mux,
 	}
@@ -82,7 +90,7 @@ func (p *Proxy) Start() error {
 
 	log.Infof("starting proxy server on port %d", p.Proxy.Port)
 	go func() {
-		err := p.server.ListenAndServe()
+		err := p.httpServer.ListenAndServe()
 		log.Infof("shutting down proxy server: %v", err)
 	}()
 
@@ -206,9 +214,12 @@ func (p *Proxy) proxyRequest(res http.ResponseWriter, req *http.Request, host st
 }
 
 func (p *Proxy) Stop() error {
-	return p.server.Shutdown(context.Background())
+	return p.httpServer.Shutdown(context.Background())
 }
 
 func (p *Proxy) Notify(msg string) {
 	log.Infof("notifying browser: %s", msg)
+	p.sseServer.Publish("hmr", &sse.Event{
+		Data: []byte(msg),
+	})
 }

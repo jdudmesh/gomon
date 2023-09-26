@@ -36,6 +36,8 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+const ipcStatusDisconnected = "Disconnected"
+
 type BrowserNotifier interface {
 	Notify(string)
 }
@@ -139,6 +141,7 @@ func (r *HotReloader) Close() error {
 		}
 	}
 
+	log.Info("closing IPC server")
 	r.ipcServer.Close()
 
 	err := r.closeChild()
@@ -165,13 +168,18 @@ func (r *HotReloader) runIPCServer() error {
 			}
 			switch msg.MsgType {
 			case gomonclient.MsgTypeReloaded:
+				fallthrough
 			case gomonclient.MsgTypePing:
 				if r.browserNotifier != nil {
 					data := string(msg.Data)
 					r.browserNotifier.Notify(data)
 				}
-			case -1:
+			case gomonclient.MsgTypeInternal:
 				log.Debugf("Internal message received: %+v", msg)
+				if msg.Status == ipcStatusDisconnected {
+					log.Info("IPC server closed")
+					return
+				}
 			default:
 				log.Warnf("unhandled ipc message type: %d", msg.MsgType)
 			}

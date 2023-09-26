@@ -35,7 +35,6 @@ func main() {
 	var rootDirectory string
 	var entrypoint string
 	var entrypointArgs []string
-	var templatePathGlob string
 	var envFiles string
 
 	quit := make(chan bool)
@@ -43,7 +42,6 @@ func main() {
 	fs := flag.NewFlagSet("gomon flags", flag.ExitOnError)
 	fs.StringVar(&configPath, "config", "", "Path to a config file (gomon.config.yml))")
 	fs.StringVar(&rootDirectory, "root", "", "The root directory to watch")
-	fs.StringVar(&templatePathGlob, "template", "", "The template path to watch. Should be a glob pattern")
 	fs.StringVar(&envFiles, "env", "", "A comma separated list of env files to load")
 	err := fs.Parse(os.Args[1:])
 	if err != nil {
