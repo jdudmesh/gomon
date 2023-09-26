@@ -48,6 +48,7 @@ type HotReloaderCloseFunc func(*HotReloader)
 type HotReloader struct {
 	config.Config
 	envVars         []string
+	excludePaths    []string
 	watcher         *fsnotify.Watcher
 	childCmd        atomic.Value
 	childCmdClosed  chan bool
@@ -79,6 +80,7 @@ func New(config config.Config, closeFn HotReloaderCloseFunc, opts ...HotReloader
 	reloader := &HotReloader{
 		Config:         config,
 		closeFunc:      closeFn,
+		excludePaths:   []string{".git"},
 		envVars:        os.Environ(),
 		childCmdClosed: make(chan bool, 1),
 		childLock:      sync.Mutex{},
@@ -87,6 +89,8 @@ func New(config config.Config, closeFn HotReloaderCloseFunc, opts ...HotReloader
 		isRespawning:   atomic.Bool{},
 		ipcChannel:     "gomon-" + uuid.New().String(),
 	}
+
+	reloader.excludePaths = append(reloader.excludePaths, config.ExludePaths...)
 
 	for _, opt := range opts {
 		err := opt(reloader)
@@ -232,7 +236,7 @@ func (r *HotReloader) processFileChange(event fsnotify.Event) {
 		relPath = filePath
 	}
 
-	for _, exclude := range r.Config.ExludePaths {
+	for _, exclude := range r.excludePaths {
 		if strings.HasPrefix(relPath, exclude) {
 			log.Infof("excluded file: %s", relPath)
 			return

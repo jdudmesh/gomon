@@ -214,6 +214,9 @@ func (p *Proxy) proxyRequest(res http.ResponseWriter, req *http.Request, host st
 }
 
 func (p *Proxy) Stop() error {
+	if p.sseServer != nil {
+		p.sseServer.Close()
+	}
 	return p.httpServer.Shutdown(context.Background())
 }
 
