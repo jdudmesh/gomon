@@ -1,2 +1,4 @@
+.DS_Store
+__debug_bin*
 .vscode
-
+node_modules

@@ -25,6 +25,7 @@ import (
 	"syscall"
 
 	"github.com/jdudmesh/gomon/internal/config"
+	"github.com/jdudmesh/gomon/internal/proxy"
 	"github.com/jdudmesh/gomon/internal/watcher"
 	log "github.com/sirupsen/logrus"
 )
@@ -34,15 +35,13 @@ func main() {
 	var rootDirectory string
 	var entrypoint string
 	var entrypointArgs []string
-	var templatePathGlob string
 	var envFiles string
 
 	quit := make(chan bool)
 
 	fs := flag.NewFlagSet("gomon flags", flag.ExitOnError)
 	fs.StringVar(&configPath, "config", "", "Path to a config file (gomon.config.yml))")
-	fs.StringVar(&rootDirectory, "root", "", "The root directory to watch")
-	fs.StringVar(&templatePathGlob, "template", "", "The template path to watch. Should be a glob pattern")
+	fs.StringVar(&rootDirectory, "directory", "", "The directory to watch")
 	fs.StringVar(&envFiles, "env", "", "A comma separated list of env files to load")
 	err := fs.Parse(os.Args[1:])
 	if err != nil {
@@ -79,8 +78,12 @@ func main() {
 		config.EntrypointArgs = entrypointArgs
 	}
 
-	if templatePathGlob != "" {
-		config.TemplatePathGlob = templatePathGlob
+	if len(config.HardReload) == 0 {
+		config.HardReload = []string{"*.go", "go.mod", "go.sum"}
+	}
+
+	if len(config.ExludePaths) == 0 {
+		config.ExludePaths = []string{"vendor"}
 	}
 
 	if envFiles != "" {
@@ -92,10 +95,27 @@ func main() {
 		log.Fatalf("Cannot set working directory: %v", err)
 	}
 
-	w, err := watcher.New(config,
+	proxy, err := proxy.New(*config)
+	if err != nil {
+		log.Fatalf("creating proxy: %v", err)
+	}
+	defer func() {
+		err := proxy.Stop()
+		if err != nil {
+			log.Fatalf("stopping proxy: %v", err)
+		}
+	}()
+
+	err = proxy.Start()
+	if err != nil {
+		log.Fatalf("starting proxy: %v", err)
+	}
+
+	w, err := watcher.New(*config,
 		func(w *watcher.HotReloader) {
 			quit <- true
 		},
+		watcher.WithBrowserNotifier(proxy),
 	)
 
 	if err != nil {

@@ -29,12 +29,21 @@ import (
 const defaultConfigFileName = "gomon.config.yml"
 
 type Config struct {
-	RootDirectory     string   `yaml:"rootDirectory"`
-	Entrypoint        string   `yaml:"entrypoint"`
-	EntrypointArgs    []string `yaml:"entrypointArgs"`
-	TemplatePathGlob  string   `yaml:"templatePathGlob"`
-	EnvFiles          []string `yaml:"envFiles"`
-	ReloadOnUnhandled bool     `yaml:"reloadOnUnhandled"`
+	RootDirectory  string   `yaml:"rootDirectory"`
+	Entrypoint     string   `yaml:"entrypoint"`
+	EntrypointArgs []string `yaml:"entrypointArgs"`
+	EnvFiles       []string `yaml:"envFiles"`
+	HardReload     []string `yaml:"hardReload"`
+	SoftReload     []string `yaml:"softReload"`
+	ExludePaths    []string `yaml:"excludePaths"`
+	Proxy          struct {
+		Enabled    bool `yaml:"enabled"`
+		Port       int  `yaml:"port"`
+		Downstream struct {
+			Host    string `yaml:"host"`
+			Timeout int    `yaml:"timeout"`
+		} `yaml:"downstream"`
+	} `yaml:"proxy"`
 }
 
 func New(configPath, rootDirectory string) (*Config, error) {
@@ -50,6 +59,7 @@ func New(configPath, rootDirectory string) (*Config, error) {
 		return config, nil
 	}
 
+	log.Infof("loading config from %s", filename)
 	f, err := os.Open(filename)
 	if err != nil {
 		return nil, fmt.Errorf("opening config file: %w", err)

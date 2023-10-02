@@ -1,8 +1,16 @@
-rootDirectory: ~/Develop/example
-entrypoint: ./cmd/main.go
+entrypoint: ./cmd/server/main.go
 entrypointArgs: ["--somearg", "somevalue"]
-templatePathGlob: ./templates
+hardReload: ["*.go", "go.mod", "go.sum"]
+softReload: ["*.html", "*.css", "*.js", "*.json", "*.yml", "*.yaml", "*.toml", "*.xml", "*.md", "*.txt", "*.tmpl", "*.template"]
+excludePaths: ["vendor", "client"]
+
 envFiles:
-  - .env
-  - .env.local
+  - ".env"
+  - ".env.local"
 reloadOnUnhandled: true
+proxy:
+  enabled: true
+  port: 4000
+  downstream:
+    host: localhost:8081
+    timeout: 5
