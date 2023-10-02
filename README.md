@@ -15,8 +15,9 @@ For example usage see [this example](https://github.com/jdudmesh/gomon-example)
 * `go run` a project and force hard restart based on file changes defined by a list of file extensions (typically `*.go`)
 * load environment variables from e.g. `.env` files
 * perform a soft restart (e.g. reload templates) based on a file changes defined by second list of file extensions (typically `*.html`)
+* ignore file changes in specified directories (e.g. `vendor`)
 * Proxy http requests to the downstream project and automatically inject an HMR script
-* Fire a page reload in the browser on hard or soft restart use SSE
+* Fire a page reload in the browser on hard or soft restart using SSE
 
 # Usage
 
@@ -38,7 +39,7 @@ This will simply `go run` your project and restart on changes to `*.go` files.
 `gomon` supports a number of command line parameters:
 ```
 --config   - specify a config file (see below)
---root     - use an alternative root directory
+--directory     - use an alternative root directory
 --env      - a comma separated list of environment variable files to load e.g. .env,.env.local
 
 ```
@@ -55,8 +56,8 @@ If a config file is specified, or one is found in the working directory, then th
 The config file is a YAML file as follows:
 ```yaml
 
-entrypoint: 
-entrypointArgs: 
+entrypoint:
+entrypointArgs:
 templatePathGlob: <relative path + glob to template directory>
 envFiles:
   - <env file e.g. .env>
@@ -73,7 +74,7 @@ excludePaths: [<array of relative paths to exlude from watch>]
 envFiles:
   - <environment variable files to load>
 reloadOnUnhandled: true|false # cold reload by default if file not otherwise handled
-proxy: 
+proxy:
   enabled: true # start a proxy server to inject HMR script
   port: <port num>
   downstream:

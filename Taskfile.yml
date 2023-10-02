@@ -1,0 +1,8 @@
+version: "3"
+tasks:
+  client/local:
+    cmds:
+      - go mod edit -replace github.com/jdudmesh/gomon-client=../gomon-client
+  client/git:
+    cmds:
+      - go mod edit -dropreplace github.com/jdudmesh/gomon-client

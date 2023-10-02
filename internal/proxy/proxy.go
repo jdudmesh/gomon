@@ -88,7 +88,7 @@ func (p *Proxy) Start() error {
 		return nil
 	}
 
-	log.Infof("starting proxy server on port %d", p.Proxy.Port)
+	log.Infof("proxy server running on http://localhost:%d", p.Proxy.Port)
 	go func() {
 		err := p.httpServer.ListenAndServe()
 		log.Infof("shutting down proxy server: %v", err)

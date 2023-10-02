@@ -41,7 +41,7 @@ func main() {
 
 	fs := flag.NewFlagSet("gomon flags", flag.ExitOnError)
 	fs.StringVar(&configPath, "config", "", "Path to a config file (gomon.config.yml))")
-	fs.StringVar(&rootDirectory, "root", "", "The root directory to watch")
+	fs.StringVar(&rootDirectory, "directory", "", "The directory to watch")
 	fs.StringVar(&envFiles, "env", "", "A comma separated list of env files to load")
 	err := fs.Parse(os.Args[1:])
 	if err != nil {

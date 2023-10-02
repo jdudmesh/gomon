@@ -31,8 +31,8 @@ import (
 	"github.com/fsnotify/fsnotify"
 	"github.com/google/uuid"
 	ipc "github.com/james-barrow/golang-ipc"
+	gomonclient "github.com/jdudmesh/gomon-client"
 	"github.com/jdudmesh/gomon/internal/config"
-	gomonclient "github.com/jdudmesh/gomon/pkg/client"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -58,7 +58,6 @@ type HotReloader struct {
 	killTimeout     time.Duration // TODO: make configurable
 	isRespawning    atomic.Bool
 	ipcServer       *ipc.Server
-	ipcChannel      string
 	browserNotifier BrowserNotifier
 }
 
@@ -87,7 +86,6 @@ func New(config config.Config, closeFn HotReloaderCloseFunc, opts ...HotReloader
 		closeLock:      sync.Mutex{},
 		killTimeout:    5 * time.Second,
 		isRespawning:   atomic.Bool{},
-		ipcChannel:     "gomon-" + uuid.New().String(),
 	}
 
 	reloader.excludePaths = append(reloader.excludePaths, config.ExludePaths...)
@@ -110,8 +108,6 @@ func New(config config.Config, closeFn HotReloaderCloseFunc, opts ...HotReloader
 		}
 	}
 
-	reloader.envVars = append(reloader.envVars, fmt.Sprintf("GOMON_IPC_CHANNEL=%s", reloader.ipcChannel))
-
 	return reloader, nil
 }
 
@@ -120,11 +116,6 @@ func (r *HotReloader) Run() error {
 	log.Infof("starting gomon with root directory: %s", r.Config.RootDirectory)
 
 	r.isRespawning.Store(false)
-
-	err = r.runIPCServer()
-	if err != nil {
-		return err
-	}
 
 	err = r.watch()
 	if err != nil {
@@ -156,9 +147,9 @@ func (r *HotReloader) Close() error {
 	return nil
 }
 
-func (r *HotReloader) runIPCServer() error {
+func (r *HotReloader) runIPCServer(ipcChannel string) error {
 	var err error
-	r.ipcServer, err = ipc.StartServer(r.ipcChannel, nil)
+	r.ipcServer, err = ipc.StartServer(ipcChannel, nil)
 	if err != nil {
 		return fmt.Errorf("ipc server: %w", err)
 	}
@@ -293,6 +284,12 @@ func (r *HotReloader) spawnChild() {
 		r.childLock.Lock()
 		defer r.childLock.Unlock()
 
+		ipcChannel := "gomon-" + uuid.New().String()
+		err := r.runIPCServer(ipcChannel)
+		if err != nil {
+			log.Errorf("starting ipc server: %+v", err)
+		}
+
 		if r.getChildCmd() != nil {
 			log.Warn("child process already running")
 			return
@@ -304,16 +301,20 @@ func (r *HotReloader) spawnChild() {
 		if len(r.Config.EntrypointArgs) > 0 {
 			args = append(args, r.Config.EntrypointArgs...)
 		}
+
+		envVars := []string{fmt.Sprintf("GOMON_IPC_CHANNEL=%s", ipcChannel)}
+		envVars = append(envVars, r.envVars...)
+
 		cmd := exec.Command("go", args...)
 		cmd.Dir = r.Config.RootDirectory
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-		cmd.Env = r.envVars
+		cmd.Env = envVars
 
 		r.setChildCmd(cmd)
 
-		err := cmd.Start()
+		err = cmd.Start()
 		if err != nil {
 			log.Errorf("spawning child process: %+v", err)
 			return
