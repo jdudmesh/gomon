@@ -93,7 +93,7 @@ import (
 	"net/http"
 	"os"
 
-	templates "github.com/jdudmesh/gomon/pkg/client"
+	templates "github.com/jdudmesh/gomon-client"
 	"github.com/labstack/echo/v4"
 )
 
