@@ -14,3 +14,5 @@ proxy:
   downstream:
     host: localhost:8081
     timeout: 5
+ui:
+  enabled: true

@@ -18,6 +18,7 @@ For example usage see [this example](https://github.com/jdudmesh/gomon-example)
 * ignore file changes in specified directories (e.g. `vendor`)
 * Proxy http requests to the downstream project and automatically inject an HMR script
 * Fire a page reload in the browser on hard or soft restart using SSE
+* implements a Web UI which displays console logs
 
 # Usage
 
@@ -80,8 +81,15 @@ proxy:
   downstream:
     host: <the host:port of your project> # e.g. localhost:8081
     timeout: <timeout in seconds> # downstream request timeout
+ui:
+  enabled: true
+	port: 4001
 
-```
+## Web UI
+`gomon` now supports a (currently) barebones Web UI which displays captured console output. The aim is to make this fully searchable and to pretty print JSON logs where possible.
+
+To enable ass the `ui` key to the config and set `enabled` to `true`. By default the UI listens on port 4001 but you can change it in the config. All log events are stored in a SQLITE database in a `.gomon` folder in the target project. This means that the output of previous runs of the code persists and can be searched. Don't forget to put `.gomon` in your `.gitignore` file.
+
 
 ## Template files
 If your project contains Go HTML templates then you can reload them by defining them in the config file using the softReload property. `gomon` uses IPC to trigger a reload and wait for confirmation before triggering a hot reload in the downstream browsers. The project must make use of the [the `gomon` client](https://github.com/jdudmesh/gomon-client).

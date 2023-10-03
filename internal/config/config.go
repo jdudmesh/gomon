@@ -44,6 +44,10 @@ type Config struct {
 			Timeout int    `yaml:"timeout"`
 		} `yaml:"downstream"`
 	} `yaml:"proxy"`
+	UI struct {
+		Enabled bool `yaml:"enabled"`
+		Port    int  `yaml:"port"`
+	} `yaml:"ui"`
 }
 
 func New(configPath, rootDirectory string) (*Config, error) {

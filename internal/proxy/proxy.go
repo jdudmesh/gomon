@@ -217,7 +217,12 @@ func (p *Proxy) Stop() error {
 	if p.sseServer != nil {
 		p.sseServer.Close()
 	}
-	return p.httpServer.Shutdown(context.Background())
+
+	if p.httpServer != nil {
+		return p.httpServer.Shutdown(context.Background())
+	}
+
+	return nil
 }
 
 func (p *Proxy) Notify(msg string) {
