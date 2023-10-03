@@ -19,6 +19,7 @@ package watcher
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -38,8 +39,14 @@ import (
 
 const ipcStatusDisconnected = "Disconnected"
 
-type BrowserNotifier interface {
+type Notifier interface {
 	Notify(string)
+}
+
+type ConsoleCapture interface {
+	Respawning()
+	Stdout() io.Writer
+	Stderr() io.Writer
 }
 
 type HotReloaderOption func(*HotReloader) error
@@ -47,18 +54,19 @@ type HotReloaderCloseFunc func(*HotReloader)
 
 type HotReloader struct {
 	config.Config
-	envVars         []string
-	excludePaths    []string
-	watcher         *fsnotify.Watcher
-	childCmd        atomic.Value
-	childCmdClosed  chan bool
-	childLock       sync.Mutex
-	closeLock       sync.Mutex
-	closeFunc       HotReloaderCloseFunc
-	killTimeout     time.Duration // TODO: make configurable
-	isRespawning    atomic.Bool
-	ipcServer       *ipc.Server
-	browserNotifier BrowserNotifier
+	envVars        []string
+	excludePaths   []string
+	watcher        *fsnotify.Watcher
+	childCmd       atomic.Value
+	childCmdClosed chan bool
+	childLock      sync.Mutex
+	closeLock      sync.Mutex
+	closeFunc      HotReloaderCloseFunc
+	killTimeout    time.Duration // TODO: make configurable
+	isRespawning   atomic.Bool
+	ipcServer      *ipc.Server
+	notifiers      []Notifier
+	consoleCapture ConsoleCapture
 }
 
 func WithCloseFunc(fn HotReloaderCloseFunc) HotReloaderOption {
@@ -68,9 +76,16 @@ func WithCloseFunc(fn HotReloaderCloseFunc) HotReloaderOption {
 	}
 }
 
-func WithBrowserNotifier(n BrowserNotifier) HotReloaderOption {
+func WithNotifier(n Notifier) HotReloaderOption {
 	return func(r *HotReloader) error {
-		r.browserNotifier = n
+		r.notifiers = append(r.notifiers, n)
+		return nil
+	}
+}
+
+func WithConsoleCapture(c ConsoleCapture) HotReloaderOption {
+	return func(r *HotReloader) error {
+		r.consoleCapture = c
 		return nil
 	}
 }
@@ -78,6 +93,7 @@ func WithBrowserNotifier(n BrowserNotifier) HotReloaderOption {
 func New(config config.Config, closeFn HotReloaderCloseFunc, opts ...HotReloaderOption) (*HotReloader, error) {
 	reloader := &HotReloader{
 		Config:         config,
+		notifiers:      []Notifier{},
 		closeFunc:      closeFn,
 		excludePaths:   []string{".git"},
 		envVars:        os.Environ(),
@@ -161,20 +177,27 @@ func (r *HotReloader) runIPCServer(ipcChannel string) error {
 				log.Errorf("ipc read: %+v", err)
 				continue
 			}
+
 			switch msg.MsgType {
 			case gomonclient.MsgTypeReloaded:
-				fallthrough
+				r.notify(string(msg.Data))
+
 			case gomonclient.MsgTypePing:
-				if r.browserNotifier != nil {
-					data := string(msg.Data)
-					r.browserNotifier.Notify(data)
+				err := r.ipcServer.Write(gomonclient.MsgTypePong, nil)
+				if err != nil {
+					log.Errorf("ipc write: %+v", err)
 				}
+
+			case gomonclient.MsgTypeStartup:
+				r.notify("#gomon:startup#")
+
 			case gomonclient.MsgTypeInternal:
 				log.Debugf("Internal message received: %+v", msg)
 				if msg.Status == ipcStatusDisconnected {
 					log.Info("IPC server closed")
 					return
 				}
+
 			default:
 				log.Warnf("unhandled ipc message type: %d", msg.MsgType)
 			}
@@ -182,6 +205,12 @@ func (r *HotReloader) runIPCServer(ipcChannel string) error {
 	}()
 
 	return nil
+}
+
+func (r *HotReloader) notify(hint string) {
+	for _, notifier := range r.notifiers {
+		notifier.Notify(hint)
+	}
 }
 
 func (r *HotReloader) watch() error {
@@ -229,7 +258,7 @@ func (r *HotReloader) processFileChange(event fsnotify.Event) {
 
 	for _, exclude := range r.excludePaths {
 		if strings.HasPrefix(relPath, exclude) {
-			log.Infof("excluded file: %s", relPath)
+			log.Debugf("excluded file: %s", relPath)
 			return
 		}
 	}
@@ -284,6 +313,8 @@ func (r *HotReloader) spawnChild() {
 		r.childLock.Lock()
 		defer r.childLock.Unlock()
 
+		r.consoleCapture.Respawning()
+
 		ipcChannel := "gomon-" + uuid.New().String()
 		err := r.runIPCServer(ipcChannel)
 		if err != nil {
@@ -307,8 +338,8 @@ func (r *HotReloader) spawnChild() {
 
 		cmd := exec.Command("go", args...)
 		cmd.Dir = r.Config.RootDirectory
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
+		cmd.Stdout = r.consoleCapture.Stdout()
+		cmd.Stderr = r.consoleCapture.Stderr()
 		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 		cmd.Env = envVars
 
@@ -323,6 +354,9 @@ func (r *HotReloader) spawnChild() {
 		err = cmd.Wait()
 		if err != nil && !(err.Error() != "signal: terminated" || err.Error() != "signal: killed") {
 			log.Warnf("child process exited abnormally: %+v", err)
+		}
+		if cmd.ProcessState.ExitCode() != 0 {
+			log.Warnf("child process exited with non-zero status: %d", cmd.ProcessState.ExitCode())
 		}
 		r.setChildCmd(nil)
 		r.childCmdClosed <- true

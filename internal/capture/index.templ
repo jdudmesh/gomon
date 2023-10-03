@@ -1,0 +1,49 @@
+package capture
+
+templ Event(ev *LogEvent) {
+  <div class="flex flex-row text-blue-400 font-mono">
+    <div class="w-1/6">{ ev.CreatedAt.Format("15:04:05.000") }</div>
+    <div class="w-5/6 break-all">{ ev.EventData }</div>
+  </div>
+}
+
+templ Index(currentRun int, runs []LogRun, events []LogEvent) {
+	<!DOCTYPE html>
+	<html>
+		<head>
+			<title>gomon console</title>
+			<script src="https://cdn.tailwindcss.com"></script>
+      <script src="https://unpkg.com/htmx.org@1.9.6" integrity="sha384-FhXw7b6AlE/jyjlZH5iHa/tTe9EpJ1Y55RjcgPbjeWMskSxZt1v9qkxLJWNJaGni" crossorigin="anonymous"></script>
+			<script src="https://unpkg.com/htmx.org/dist/ext/sse.js"></script>
+		</head>
+		<body class="bg-slate-900 text-white flex flex-col h-screen">
+			<nav class="flex flex-row p-2 grow-0">
+				<a href="/" class="px-4">gomon</a>
+				<label class="px-4">Filter:</label>
+				<select class="bg-slate-900 text-white">
+					<option value="all" selected>all</option>
+					<option value="stdout">stdout</option>
+					<option value="stderr">stderr</option>
+				</select>
+				<label class="px-4">Run:</label>
+				<select class="bg-slate-900 text-white">
+					for _, r := range runs {
+						<option
+ 							value="{r.ID}"
+ 							if int(r.ID) == currentRun {
+								selected?={ true }
+							}
+						>{ r.CreatedAt.Format("2006-01-02 15:04:05") }</option>
+					}
+				</select>
+			</nav>
+			<main class="grow flex flex-col justify-end m-4 p-4 border-solid border border-blue-400 rounded-lg">
+        for _, ev := range events {
+          @Event(&ev)
+        }
+        <div hx-ext="sse" sse-connect="/__gomon__/events?stream=logs" hx-swap="afterend" sse-swap="message"></div>
+      </main>
+		</body>
+	</html>
+}
+

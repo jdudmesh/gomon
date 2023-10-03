@@ -24,6 +24,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/jdudmesh/gomon/internal/capture"
 	"github.com/jdudmesh/gomon/internal/config"
 	"github.com/jdudmesh/gomon/internal/proxy"
 	"github.com/jdudmesh/gomon/internal/watcher"
@@ -85,6 +86,7 @@ func main() {
 	if len(config.ExludePaths) == 0 {
 		config.ExludePaths = []string{"vendor"}
 	}
+	config.ExludePaths = append(config.ExludePaths, ".gomon/")
 
 	if envFiles != "" {
 		config.EnvFiles = strings.Split(envFiles, ",")
@@ -111,11 +113,20 @@ func main() {
 		log.Fatalf("starting proxy: %v", err)
 	}
 
+	capture := capture.New(*config)
+	if capture != nil {
+		err = capture.Start()
+		if err != nil {
+			log.Fatalf("starting capture: %v", err)
+		}
+	}
+
 	w, err := watcher.New(*config,
 		func(w *watcher.HotReloader) {
 			quit <- true
 		},
-		watcher.WithBrowserNotifier(proxy),
+		watcher.WithNotifier(proxy),
+		watcher.WithConsoleCapture(capture),
 	)
 
 	if err != nil {
