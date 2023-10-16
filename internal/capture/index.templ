@@ -1,10 +1,10 @@
 package capture
 
 templ Event(ev *LogEvent) {
-  <div class="flex flex-row text-blue-400 font-mono">
-    <div class="w-1/6">{ ev.CreatedAt.Format("15:04:05.000") }</div>
-    <div class="w-5/6 break-all">{ ev.EventData }</div>
-  </div>
+	<div class="flex flex-row text-blue-400 font-mono" data-event-date="{ev.CreatedAt}">
+		<div class="w-1/6">{ ev.CreatedAt.Format("15:04:05.000") }</div>
+		<div class="w-5/6 break-all">{ ev.EventData }</div>
+	</div>
 }
 
 templ Index(currentRun int, runs []LogRun, events []LogEvent) {
@@ -13,7 +13,7 @@ templ Index(currentRun int, runs []LogRun, events []LogEvent) {
 		<head>
 			<title>gomon console</title>
 			<script src="https://cdn.tailwindcss.com"></script>
-      <script src="https://unpkg.com/htmx.org@1.9.6" integrity="sha384-FhXw7b6AlE/jyjlZH5iHa/tTe9EpJ1Y55RjcgPbjeWMskSxZt1v9qkxLJWNJaGni" crossorigin="anonymous"></script>
+			<script src="https://unpkg.com/htmx.org@1.9.6" integrity="sha384-FhXw7b6AlE/jyjlZH5iHa/tTe9EpJ1Y55RjcgPbjeWMskSxZt1v9qkxLJWNJaGni" crossorigin="anonymous"></script>
 			<script src="https://unpkg.com/htmx.org/dist/ext/sse.js"></script>
 		</head>
 		<body class="bg-slate-900 text-white flex flex-col h-screen">
@@ -37,12 +37,31 @@ templ Index(currentRun int, runs []LogRun, events []LogEvent) {
 					}
 				</select>
 			</nav>
-			<main class="grow flex flex-col justify-end m-4 p-4 border-solid border border-blue-400 rounded-lg">
-        for _, ev := range events {
-          @Event(&ev)
-        }
-        <div hx-ext="sse" sse-connect="/__gomon__/events?stream=logs" hx-swap="afterend" sse-swap="message"></div>
-      </main>
+			<main id="event-list" class="grow flex flex-col justify-end m-4 p-4 border-solid border border-blue-400 rounded-lg">
+				for _, ev := range events {
+					@Event(&ev)
+				}
+			</main>
+			<script>
+				const eventList = document.getElementById("event-list");
+
+				const logSource = new EventSource("/__gomon__/events?stream=logs", {
+  				withCredentials: true,
+				});
+
+				const runSource = new EventSource("/__gomon__/events?stream=runs", {
+  				withCredentials: true,
+				});
+
+				logSource.onmessage = (event) => {
+					eventList.insertAdjacentHTML("beforeend", event.data);
+					eventList.scrollTop = eventList.scrollHeight;
+				};
+
+				runSource.onmessage = (event) => {
+					window.location.reload();
+				};
+			</script>
 		</body>
 	</html>
 }

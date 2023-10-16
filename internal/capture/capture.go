@@ -3,6 +3,7 @@ package capture
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -82,6 +83,7 @@ func New(config config.Config) *consoleCapture {
 	cap.sseServer = sse.New()
 	cap.sseServer.AutoReplay = false
 	cap.sseServer.CreateStream("logs")
+	cap.sseServer.CreateStream("runs")
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", cap.handleIndex)
@@ -183,7 +185,8 @@ func (c *consoleCapture) Respawning() {
 	if c == nil {
 		return
 	}
-	res, err := c.db.Exec("INSERT INTO runs (created_at) VALUES ($1)", time.Now())
+	runDate := time.Now()
+	res, err := c.db.Exec("INSERT INTO runs (created_at) VALUES ($1)", runDate)
 	if err != nil {
 		log.Errorf("inserting run: %v", err)
 	}
@@ -192,6 +195,22 @@ func (c *consoleCapture) Respawning() {
 		log.Errorf("getting last insert id: %v", err)
 	}
 	c.currentRunID.Store(runID)
+
+	runData := struct {
+		ID   int64     `json:"id"`
+		Date time.Time `json:"date"`
+	}{
+		ID:   runID,
+		Date: runDate,
+	}
+	runDataBytes, err := json.Marshal(runData)
+	if err != nil {
+		log.Errorf("marshalling run data: %v", err)
+		return
+	}
+	c.sseServer.Publish("runs", &sse.Event{
+		Data: runDataBytes,
+	})
 }
 
 func (c *consoleCapture) handleIndex(w http.ResponseWriter, r *http.Request) {

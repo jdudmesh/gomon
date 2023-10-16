@@ -22,7 +22,7 @@ func Event(ev *LogEvent) templ.Component {
 			var_1 = templ.NopComponent
 		}
 		ctx = templ.ClearChildren(ctx)
-		_, err = templBuffer.WriteString("<div class=\"flex flex-row text-blue-400 font-mono\"><div class=\"w-1/6\">")
+		_, err = templBuffer.WriteString("<div class=\"flex flex-row text-blue-400 font-mono\" data-event-date=\"{ev.CreatedAt}\"><div class=\"w-1/6\">")
 		if err != nil {
 			return err
 		}
@@ -185,7 +185,7 @@ func Index(currentRun int, runs []LogRun, events []LogEvent) templ.Component {
 				return err
 			}
 		}
-		_, err = templBuffer.WriteString("</select></nav><main class=\"grow flex flex-col justify-end m-4 p-4 border-solid border border-blue-400 rounded-lg\">")
+		_, err = templBuffer.WriteString("</select></nav><main id=\"event-list\" class=\"grow flex flex-col justify-end m-4 p-4 border-solid border border-blue-400 rounded-lg\">")
 		if err != nil {
 			return err
 		}
@@ -195,7 +195,35 @@ func Index(currentRun int, runs []LogRun, events []LogEvent) templ.Component {
 				return err
 			}
 		}
-		_, err = templBuffer.WriteString("<div hx-ext=\"sse\" sse-connect=\"/__gomon__/events?stream=logs\" hx-swap=\"afterend\" sse-swap=\"message\"></div></main></body></html>")
+		_, err = templBuffer.WriteString("</main><script>")
+		if err != nil {
+			return err
+		}
+		var_16 := `
+				const eventList = document.getElementById("event-list");
+
+				const logSource = new EventSource("/__gomon__/events?stream=logs", {
+  				withCredentials: true,
+				});
+
+				const runSource = new EventSource("/__gomon__/events?stream=runs", {
+  				withCredentials: true,
+				});
+
+				logSource.onmessage = (event) => {
+					eventList.insertAdjacentHTML("beforeend", event.data);
+					eventList.scrollTop = eventList.scrollHeight;
+				};
+
+				runSource.onmessage = (event) => {
+					window.location.reload();
+				};
+			`
+		_, err = templBuffer.WriteString(var_16)
+		if err != nil {
+			return err
+		}
+		_, err = templBuffer.WriteString("</script></body></html>")
 		if err != nil {
 			return err
 		}
