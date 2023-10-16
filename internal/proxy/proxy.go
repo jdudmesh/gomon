@@ -133,9 +133,11 @@ func (p *Proxy) proxyRequest(res http.ResponseWriter, req *http.Request, host st
 	defer nextRes.Body.Close()
 
 	nextRes.Header.Del("Content-Length")
+	nextRes.Header.Del("Cache-Control")
 	for k, v := range nextRes.Header {
 		res.Header()[k] = v
 	}
+	res.Header()["Cache-Control"] = []string{"no-cache, no-store, no-transform, must-revalidate"}
 
 	res.WriteHeader(nextRes.StatusCode)
 
@@ -183,7 +185,6 @@ func (p *Proxy) proxyRequest(res http.ResponseWriter, req *http.Request, host st
 					http.Error(res, err.Error(), http.StatusInternalServerError)
 					return
 				}
-				log.Infof(string(injectCode))
 				_, err = res.Write([]byte(injectCode))
 				if err != nil {
 					log.Errorf("writing response: %v", err)

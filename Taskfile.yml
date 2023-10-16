@@ -6,3 +6,11 @@ tasks:
   client/git:
     cmds:
       - go mod edit -dropreplace github.com/jdudmesh/gomon-client
+  generate/templ:
+    cmds:
+      - templ generate
+  install:
+    cmds:
+      - go install
+    deps:
+      - generate/templ
