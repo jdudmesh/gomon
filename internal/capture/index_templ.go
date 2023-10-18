@@ -216,7 +216,7 @@ func Index(currentRun int, runs []LogRun, events []LogEvent) templ.Component {
 				};
 
 				runSource.onmessage = (event) => {
-					window.location.reload();
+					window.location = window.location;
 				};
 			`
 		_, err = templBuffer.WriteString(var_16)

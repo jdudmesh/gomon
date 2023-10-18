@@ -83,10 +83,10 @@ func main() {
 		config.HardReload = []string{"*.go", "go.mod", "go.sum"}
 	}
 
-	if len(config.ExludePaths) == 0 {
-		config.ExludePaths = []string{"vendor"}
+	if len(config.ExcludePaths) == 0 {
+		config.ExcludePaths = []string{"vendor"}
 	}
-	config.ExludePaths = append(config.ExludePaths, ".gomon/")
+	config.ExcludePaths = append(config.ExcludePaths, ".gomon/")
 
 	if envFiles != "" {
 		config.EnvFiles = strings.Split(envFiles, ",")

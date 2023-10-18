@@ -39,6 +39,19 @@ CREATE INDEX IF NOT EXISTS idx_events_event_type ON events(event_type);
 CREATE INDEX IF NOT EXISTS idx_events_created_at ON events(created_at);
 `
 
+type ConsoleCaptureOption func(*consoleCapture) error
+
+func WithRespawner(respawner Respawner) ConsoleCaptureOption {
+	return func(c *consoleCapture) error {
+		c.respawner = respawner
+		return nil
+	}
+}
+
+type Respawner interface {
+	Respawn() error
+}
+
 type consoleCapture struct {
 	port         int
 	httpServer   *http.Server
@@ -46,6 +59,7 @@ type consoleCapture struct {
 	dataPath     string
 	db           *sqlx.DB
 	currentRunID atomic.Int64
+	respawner    Respawner
 }
 
 type LogRun struct {
@@ -69,7 +83,7 @@ type stderrWriter struct {
 	captureMgr *consoleCapture
 }
 
-func New(config config.Config) *consoleCapture {
+func New(config config.Config, opts ...ConsoleCaptureOption) *consoleCapture {
 	if !config.UI.Enabled {
 		return nil
 	}
@@ -80,6 +94,13 @@ func New(config config.Config) *consoleCapture {
 		cap.port = 4001
 	}
 
+	for _, opt := range opts {
+		err := opt(cap)
+		if err != nil {
+			log.Fatalf("applying option: %v", err)
+		}
+	}
+
 	cap.sseServer = sse.New()
 	cap.sseServer.AutoReplay = false
 	cap.sseServer.CreateStream("logs")
@@ -87,6 +108,7 @@ func New(config config.Config) *consoleCapture {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", cap.handleIndex)
+	mux.HandleFunc("/restart", cap.handleRestart)
 	mux.HandleFunc("/__gomon__/events", cap.sseServer.ServeHTTP)
 	cap.httpServer = &http.Server{
 		Addr:    fmt.Sprintf(":%d", cap.port),
@@ -246,9 +268,21 @@ func (c *consoleCapture) handleIndex(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		log.Errorf("rendering index: %v", err)
 		w.WriteHeader(http.StatusInternalServerError)
+	}
+}
+
+func (c *consoleCapture) handleRestart(w http.ResponseWriter, r *http.Request) {
+	if c.respawner == nil {
+		w.WriteHeader(http.StatusNotImplemented)
 		return
 	}
-
+	err := c.respawner.Respawn()
+	if err != nil {
+		log.Errorf("respawning: %v", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
 }
 
 func (w *stdoutWriter) Write(p []byte) (int, error) {

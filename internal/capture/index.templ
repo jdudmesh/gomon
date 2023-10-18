@@ -13,8 +13,7 @@ templ Index(currentRun int, runs []LogRun, events []LogEvent) {
 		<head>
 			<title>gomon console</title>
 			<script src="https://cdn.tailwindcss.com"></script>
-			<script src="https://unpkg.com/htmx.org@1.9.6" integrity="sha384-FhXw7b6AlE/jyjlZH5iHa/tTe9EpJ1Y55RjcgPbjeWMskSxZt1v9qkxLJWNJaGni" crossorigin="anonymous"></script>
-			<script src="https://unpkg.com/htmx.org/dist/ext/sse.js"></script>
+			<link href="https://cdn.jsdelivr.net/npm/daisyui@3.9.3/dist/full.css" rel="stylesheet" type="text/css"/>
 		</head>
 		<body class="bg-slate-900 text-white flex flex-col h-screen">
 			<nav class="flex flex-row p-2 grow-0">
@@ -59,7 +58,7 @@ templ Index(currentRun int, runs []LogRun, events []LogEvent) {
 				};
 
 				runSource.onmessage = (event) => {
-					window.location.reload();
+					window.location = window.location;
 				};
 			</script>
 		</body>

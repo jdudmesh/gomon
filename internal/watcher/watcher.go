@@ -104,7 +104,7 @@ func New(config config.Config, closeFn HotReloaderCloseFunc, opts ...HotReloader
 		isRespawning:   atomic.Bool{},
 	}
 
-	reloader.excludePaths = append(reloader.excludePaths, config.ExludePaths...)
+	reloader.excludePaths = append(reloader.excludePaths, config.ExcludePaths...)
 
 	for _, opt := range opts {
 		err := opt(reloader)
@@ -282,6 +282,32 @@ func (r *HotReloader) processFileChange(event fsnotify.Event) {
 		}
 	}
 
+	for patt, generated := range r.Config.Generated {
+		if match, _ := filepath.Match(patt, filepath.Base(filePath)); match {
+			log.Infof("generated file source: %s", relPath)
+			for _, task := range generated {
+				if task == "__hard_reload" {
+					log.Infof("hard reload: %s", relPath)
+					r.respawnChild()
+					continue
+				}
+				if task == "__soft_reload" {
+					log.Infof("soft reload: %s", relPath)
+					err := r.ipcServer.Write(gomonclient.MsgTypeReload, []byte(relPath))
+					if err != nil {
+						log.Errorf("ipc write: %+v", err)
+					}
+					continue
+				}
+				err := r.runGeneratedTask(task)
+				if err != nil {
+					log.Errorf("running generated task: %+v", err)
+				}
+			}
+		}
+		return
+	}
+
 	if r.Config.EnvFiles != nil {
 		f := filepath.Base(filePath)
 		for _, envFile := range r.Config.EnvFiles {
@@ -294,6 +320,22 @@ func (r *HotReloader) processFileChange(event fsnotify.Event) {
 	}
 
 	log.Infof("unhandled modified file: %s", relPath)
+}
+
+func (r *HotReloader) runGeneratedTask(task string) error {
+	log.Infof("running task: %s", task)
+	args := strings.Split(task, " ")
+	cmd := exec.Command(args[0], args[1:]...)
+	cmd.Dir = r.Config.RootDirectory
+	cmd.Stdout = r.consoleCapture.Stdout()
+	cmd.Stderr = r.consoleCapture.Stderr()
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Env = r.envVars
+	err := cmd.Start()
+	if err != nil {
+		return fmt.Errorf("starting task: %w", err)
+	}
+	return cmd.Wait()
 }
 
 func (r *HotReloader) watchTree() error {
