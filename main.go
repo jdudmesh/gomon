@@ -113,7 +113,8 @@ func main() {
 		log.Fatalf("starting proxy: %v", err)
 	}
 
-	capture := capture.New(*config)
+	respawn := make(chan bool)
+	capture := capture.New(*config, capture.WithRespawn(respawn))
 	if capture != nil {
 		err = capture.Start()
 		if err != nil {
@@ -139,6 +140,12 @@ func main() {
 		log.Fatalf("running monitor: %v", err)
 	}
 
+	go func() {
+		for range respawn {
+			w.Respawn()
+		}
+	}()
+
 	pid := os.Getpid()
 	log.Infof("gomon started with pid %d", pid)
 
@@ -150,4 +157,6 @@ func main() {
 	case <-quit:
 		log.Info("received quit, exiting")
 	}
+
+	close(respawn)
 }

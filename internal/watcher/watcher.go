@@ -266,7 +266,7 @@ func (r *HotReloader) processFileChange(event fsnotify.Event) {
 	for _, hard := range r.Config.HardReload {
 		if match, _ := filepath.Match(hard, filepath.Base(filePath)); match {
 			log.Infof("hard reload: %s", relPath)
-			r.respawnChild()
+			r.Respawn()
 			return
 		}
 	}
@@ -288,7 +288,7 @@ func (r *HotReloader) processFileChange(event fsnotify.Event) {
 			for _, task := range generated {
 				if task == "__hard_reload" {
 					log.Infof("hard reload: %s", relPath)
-					r.respawnChild()
+					r.Respawn()
 					continue
 				}
 				if task == "__soft_reload" {
@@ -313,7 +313,7 @@ func (r *HotReloader) processFileChange(event fsnotify.Event) {
 		for _, envFile := range r.Config.EnvFiles {
 			if f == envFile {
 				log.Infof("modified env file: %s", relPath)
-				r.respawnChild()
+				r.Respawn()
 				return
 			}
 		}
@@ -412,7 +412,7 @@ func (r *HotReloader) spawnChild() {
 	}()
 }
 
-func (r *HotReloader) respawnChild() {
+func (r *HotReloader) Respawn() {
 	r.isRespawning.Store(true)
 
 	err := r.closeChild()

@@ -41,15 +41,11 @@ CREATE INDEX IF NOT EXISTS idx_events_created_at ON events(created_at);
 
 type ConsoleCaptureOption func(*consoleCapture) error
 
-func WithRespawner(respawner Respawner) ConsoleCaptureOption {
+func WithRespawn(respawn chan bool) ConsoleCaptureOption {
 	return func(c *consoleCapture) error {
-		c.respawner = respawner
+		c.respawn = respawn
 		return nil
 	}
-}
-
-type Respawner interface {
-	Respawn() error
 }
 
 type consoleCapture struct {
@@ -59,7 +55,7 @@ type consoleCapture struct {
 	dataPath     string
 	db           *sqlx.DB
 	currentRunID atomic.Int64
-	respawner    Respawner
+	respawn      chan bool
 }
 
 type LogRun struct {
@@ -272,16 +268,11 @@ func (c *consoleCapture) handleIndex(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *consoleCapture) handleRestart(w http.ResponseWriter, r *http.Request) {
-	if c.respawner == nil {
+	if c.respawn == nil {
 		w.WriteHeader(http.StatusNotImplemented)
 		return
 	}
-	err := c.respawner.Respawn()
-	if err != nil {
-		log.Errorf("respawning: %v", err)
-		w.WriteHeader(http.StatusInternalServerError)
-		return
-	}
+	c.respawn <- true
 	w.WriteHeader(http.StatusOK)
 }
 
