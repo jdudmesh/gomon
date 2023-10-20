@@ -83,10 +83,10 @@ func main() {
 		config.HardReload = []string{"*.go", "go.mod", "go.sum"}
 	}
 
-	if len(config.ExludePaths) == 0 {
-		config.ExludePaths = []string{"vendor"}
+	if len(config.ExcludePaths) == 0 {
+		config.ExcludePaths = []string{"vendor"}
 	}
-	config.ExludePaths = append(config.ExludePaths, ".gomon/")
+	config.ExcludePaths = append(config.ExcludePaths, ".gomon/")
 
 	if envFiles != "" {
 		config.EnvFiles = strings.Split(envFiles, ",")
@@ -113,7 +113,8 @@ func main() {
 		log.Fatalf("starting proxy: %v", err)
 	}
 
-	capture := capture.New(*config)
+	respawn := make(chan bool)
+	capture := capture.New(*config, capture.WithRespawn(respawn))
 	if capture != nil {
 		err = capture.Start()
 		if err != nil {
@@ -139,6 +140,12 @@ func main() {
 		log.Fatalf("running monitor: %v", err)
 	}
 
+	go func() {
+		for range respawn {
+			w.Respawn()
+		}
+	}()
+
 	pid := os.Getpid()
 	log.Infof("gomon started with pid %d", pid)
 
@@ -150,4 +157,6 @@ func main() {
 	case <-quit:
 		log.Info("received quit, exiting")
 	}
+
+	close(respawn)
 }

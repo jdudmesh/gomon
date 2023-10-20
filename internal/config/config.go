@@ -29,13 +29,14 @@ import (
 const defaultConfigFileName = "gomon.config.yml"
 
 type Config struct {
-	RootDirectory  string   `yaml:"rootDirectory"`
-	Entrypoint     string   `yaml:"entrypoint"`
-	EntrypointArgs []string `yaml:"entrypointArgs"`
-	EnvFiles       []string `yaml:"envFiles"`
-	HardReload     []string `yaml:"hardReload"`
-	SoftReload     []string `yaml:"softReload"`
-	ExludePaths    []string `yaml:"excludePaths"`
+	RootDirectory  string              `yaml:"rootDirectory"`
+	Entrypoint     string              `yaml:"entrypoint"`
+	EntrypointArgs []string            `yaml:"entrypointArgs"`
+	EnvFiles       []string            `yaml:"envFiles"`
+	ExcludePaths   []string            `yaml:"excludePaths"`
+	HardReload     []string            `yaml:"hardReload"`
+	SoftReload     []string            `yaml:"softReload"`
+	Generated      map[string][]string `yaml:"generated"`
 	Proxy          struct {
 		Enabled    bool `yaml:"enabled"`
 		Port       int  `yaml:"port"`

@@ -3,22 +3,21 @@ go intall https://github.com/jdudmesh/gomon
 ```
 
 # Overview
-`gomon` is a tool to monitor and hot reload go programs. The DX for many front end frameworks is very good. Programs reload when file changes are detected and, for web apps, browsers are automatically reloaded. Commonly tools like `nodemon` and `Vite` are used to achieve this.
+`gomon` is a tool to monitor and hot reload go programs. The DX for many front end frameworks like NextJS is very good. Changing a  Programs reload when file changes are detected and, for web apps, browsers are automatically reloaded. Commonly tools like `nodemon` and `Vite` are used to achieve this.
 
-The aim is to provide a similar experience to these tools.
-
-There was a previous [approach to this problem](https://github.com/jdudmesh/hotreload-go) however it required instrumenting your existing code and was not able to restart on `.go` file changes. This approach instead provides a go tool which can run your go program and restart as required.
+The aim is to provide a similar experience to these tools for Go programs.
 
 For example usage see [this example](https://github.com/jdudmesh/gomon-example)
 
 ## Key features
 * `go run` a project and force hard restart based on file changes defined by a list of file extensions (typically `*.go`)
-* load environment variables from e.g. `.env` files
 * perform a soft restart (e.g. reload templates) based on a file changes defined by second list of file extensions (typically `*.html`)
 * ignore file changes in specified directories (e.g. `vendor`)
+* load environment variables from e.g. `.env` files
+* run scripts for generated files based on globs e.g. *.templ
 * Proxy http requests to the downstream project and automatically inject an HMR script
 * Fire a page reload in the browser on hard or soft restart using SSE
-* implements a Web UI which displays console logs
+* Implements a Web UI which displays and can search console logs with history
 
 # Usage
 
@@ -68,9 +67,15 @@ reloadOnUnhandled: true|false #if true then any file changes (not just .go files
 rootDirectory: <path to root>
 entrypoint: <relative path to entry point>
 entrypointArgs: [<array of args>]
+
+excludePaths: [<array of relative paths to exlude from watch>]
 hardReload: [<array of glob patterns to force hard reload>]
 softReload: [<array of glob patterns to force soft reload>]
-excludePaths: [<array of relative paths to exlude from watch>]
+
+generated:
+  <glob pattern>:
+    - <list tasks to run>
+    - "__soft_reload" | "__hard_reload" #trigger manual reload on completion
 
 envFiles:
   - <environment variable files to load>

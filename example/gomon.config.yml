@@ -1,8 +1,22 @@
 entrypoint: ./cmd/server/main.go
 entrypointArgs: ["--somearg", "somevalue"]
-hardReload: ["*.go", "go.mod", "go.sum"]
-softReload: ["*.html", "*.css", "*.js", "*.json", "*.yml", "*.yaml", "*.toml", "*.xml", "*.md", "*.txt", "*.tmpl", "*.template"]
+
 excludePaths: ["vendor", "client"]
+
+hardReload:
+  - "*.go"
+  - "go.mod"
+
+softReload:
+  - "*.html"
+  - "*.css"
+  - "*.js"
+  - "*.tmpl"
+
+generated:
+  "*.templ":
+    - "task generate/templ"
+    - "__soft_reload"
 
 envFiles:
   - ".env"

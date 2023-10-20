@@ -39,6 +39,15 @@ CREATE INDEX IF NOT EXISTS idx_events_event_type ON events(event_type);
 CREATE INDEX IF NOT EXISTS idx_events_created_at ON events(created_at);
 `
 
+type ConsoleCaptureOption func(*consoleCapture) error
+
+func WithRespawn(respawn chan bool) ConsoleCaptureOption {
+	return func(c *consoleCapture) error {
+		c.respawn = respawn
+		return nil
+	}
+}
+
 type consoleCapture struct {
 	port         int
 	httpServer   *http.Server
@@ -46,16 +55,17 @@ type consoleCapture struct {
 	dataPath     string
 	db           *sqlx.DB
 	currentRunID atomic.Int64
+	respawn      chan bool
 }
 
 type LogRun struct {
-	ID        int64     `db:"id" json:"id"`
+	ID        int       `db:"id" json:"id"`
 	CreatedAt time.Time `db:"created_at" json:"createdAt"`
 }
 
 type LogEvent struct {
-	ID        int64     `db:"id" json:"id"`
-	RunID     int64     `db:"run_id" json:"runId"`
+	ID        int       `db:"id" json:"id"`
+	RunID     int       `db:"run_id" json:"runId"`
 	EventType string    `db:"event_type" json:"eventType"`
 	EventData string    `db:"event_data" json:"eventData"`
 	CreatedAt time.Time `db:"created_at" json:"createdAt"`
@@ -69,7 +79,7 @@ type stderrWriter struct {
 	captureMgr *consoleCapture
 }
 
-func New(config config.Config) *consoleCapture {
+func New(config config.Config, opts ...ConsoleCaptureOption) *consoleCapture {
 	if !config.UI.Enabled {
 		return nil
 	}
@@ -80,6 +90,13 @@ func New(config config.Config) *consoleCapture {
 		cap.port = 4001
 	}
 
+	for _, opt := range opts {
+		err := opt(cap)
+		if err != nil {
+			log.Fatalf("applying option: %v", err)
+		}
+	}
+
 	cap.sseServer = sse.New()
 	cap.sseServer.AutoReplay = false
 	cap.sseServer.CreateStream("logs")
@@ -87,6 +104,8 @@ func New(config config.Config) *consoleCapture {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", cap.handleIndex)
+	mux.HandleFunc("/restart", cap.handleRestart)
+	mux.HandleFunc("/search", cap.handlSearch)
 	mux.HandleFunc("/__gomon__/events", cap.sseServer.ServeHTTP)
 	cap.httpServer = &http.Server{
 		Addr:    fmt.Sprintf(":%d", cap.port),
@@ -168,7 +187,7 @@ func (c *consoleCapture) write(logType, logData string) (int, error) {
 		}
 
 		buffer := bytes.Buffer{}
-		err = Event(event).Render(context.Background(), &buffer)
+		err = Event(*event).Render(context.Background(), &buffer)
 		if err != nil {
 			log.Errorf("rendering event: %v", err)
 			continue
@@ -241,14 +260,78 @@ func (c *consoleCapture) handleIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	page := Index(run, runs, events)
+	page := Console(run, runs, events)
 	err = page.Render(r.Context(), w)
+	if err != nil {
+		log.Errorf("rendering index: %v", err)
+		w.WriteHeader(http.StatusInternalServerError)
+	}
+}
+
+func (c *consoleCapture) handleRestart(w http.ResponseWriter, r *http.Request) {
+	if c.respawn == nil {
+		w.WriteHeader(http.StatusNotImplemented)
+		return
+	}
+	c.respawn <- true
+	w.WriteHeader(http.StatusOK)
+}
+
+func (c *consoleCapture) handlSearch(w http.ResponseWriter, r *http.Request) {
+	var err error
+	run := r.URL.Query().Get("run")
+	stm := r.URL.Query().Get("stm")
+	filter := r.URL.Query().Get("filter")
+	events := []LogEvent{}
+
+	params := map[string]interface{}{"run_id": run}
+	sql := "SELECT * FROM events WHERE run_id = :run_id "
+	if !(stm == "" || stm == "all") {
+		sql += " AND event_type = :event_type "
+		params["event_type"] = stm
+	}
+	if filter != "" {
+		sql += " AND event_data LIKE :event_data "
+		params["event_data"] = "%" + filter + "%"
+	}
+	sql += " ORDER BY created_at ASC;"
+
+	res, err := c.db.NamedQuery(sql, params)
+	if err != nil {
+		log.Errorf("getting event: %v", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	defer res.Close()
+	for res.Next() {
+		var ev LogEvent
+		err = res.StructScan(&ev)
+		if err != nil {
+			log.Errorf("scanning event: %v", err)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		events = append(events, ev)
+	}
+
+	if len(events) == 0 {
+		_, err = w.Write([]byte("<div class=\"text-2xl text-bold\">no events found</div>"))
+		if err != nil {
+			log.Errorf("writing response: %v", err)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	markup := EventList(events)
+	err = markup.Render(r.Context(), w)
 	if err != nil {
 		log.Errorf("rendering index: %v", err)
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
-
 }
 
 func (w *stdoutWriter) Write(p []byte) (int, error) {
