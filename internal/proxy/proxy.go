@@ -124,6 +124,10 @@ func (p *Proxy) proxyRequest(res http.ResponseWriter, req *http.Request, host st
 		return
 	}
 
+	for k, v := range req.Header {
+		nextReq.Header.Add(k, strings.Join(v, " "))
+	}
+
 	nextRes, err := http.DefaultClient.Do(nextReq)
 	if err != nil {
 		log.Errorf("proxying request: %v", err)
