@@ -49,6 +49,7 @@ func WithRespawn(respawn chan bool) ConsoleCaptureOption {
 }
 
 type consoleCapture struct {
+	enabled      bool
 	port         int
 	httpServer   *http.Server
 	sseServer    *sse.Server
@@ -79,13 +80,16 @@ type stderrWriter struct {
 	captureMgr *consoleCapture
 }
 
-func New(config config.Config, opts ...ConsoleCaptureOption) *consoleCapture {
-	if !config.UI.Enabled {
-		return nil
-	}
+func New(config config.Config, opts ...ConsoleCaptureOption) (*consoleCapture, error) {
 	cap := &consoleCapture{
-		port: config.UI.Port,
+		enabled: config.UI.Enabled,
+		port:    config.UI.Port,
 	}
+
+	if !cap.enabled {
+		return cap, nil
+	}
+
 	if cap.port == 0 {
 		cap.port = 4001
 	}
@@ -93,7 +97,7 @@ func New(config config.Config, opts ...ConsoleCaptureOption) *consoleCapture {
 	for _, opt := range opts {
 		err := opt(cap)
 		if err != nil {
-			log.Fatalf("applying option: %v", err)
+			return nil, fmt.Errorf("applying option: %w", err)
 		}
 	}
 
@@ -118,28 +122,32 @@ func New(config config.Config, opts ...ConsoleCaptureOption) *consoleCapture {
 		if os.IsNotExist(err) {
 			err = os.Mkdir(cap.dataPath, 0755)
 			if err != nil {
-				log.Fatalf("creating .gomon directory: %v", err)
+				return nil, fmt.Errorf("creating .gomon directory: %w", err)
 			}
 		} else {
-			log.Fatalf("checking for .gomon directory: %v", err)
+			return nil, fmt.Errorf("checking for .gomon directory: %w", err)
 		}
 	}
 
 	cap.db, err = sqlx.Connect("sqlite3", path.Join(cap.dataPath, "./gomon.db"))
 	if err != nil {
-		log.Fatalf("connecting to sqlite: %v", err)
+		return nil, fmt.Errorf("connecting to sqlite: %w", err)
 	}
 
 	_, err = cap.db.Exec(schema)
 	if err != nil {
-		log.Fatalf("creating console capture db schema: %v", err)
+		return nil, fmt.Errorf("creating db schema: %w", err)
 	}
 
-	return cap
+	return cap, nil
 }
 
 func (c *consoleCapture) Start() error {
 	log.Infof("UI server running on http://localhost:%d", c.port)
+	if !c.enabled {
+		return nil
+	}
+
 	go func() {
 		err := c.httpServer.ListenAndServe()
 		log.Infof("shutting down UI server: %v", err)
@@ -148,13 +156,19 @@ func (c *consoleCapture) Start() error {
 	return nil
 }
 
-func (c *consoleCapture) Stop() error {
+func (c *consoleCapture) Close() error {
+	if !c.enabled {
+		return nil
+	}
+
 	if c.sseServer != nil {
 		c.sseServer.Close()
 	}
+
 	if c.httpServer != nil {
 		return c.httpServer.Close()
 	}
+
 	return nil
 }
 

@@ -26,15 +26,15 @@ const gomonInjectCode = `
 
 const headTag = `<head>`
 
-type Proxy struct {
+type webProxy struct {
 	config.Config
 	httpServer *http.Server
 	sseServer  *sse.Server
 	injectCode string
 }
 
-func New(config config.Config) (*Proxy, error) {
-	proxy := &Proxy{
+func New(config config.Config) (*webProxy, error) {
+	proxy := &webProxy{
 		Config: config,
 	}
 
@@ -46,7 +46,7 @@ func New(config config.Config) (*Proxy, error) {
 	return proxy, nil
 }
 
-func (p *Proxy) initProxy() error {
+func (p *webProxy) initProxy() error {
 	if !p.Proxy.Enabled && p.Proxy.Port == 0 {
 		return nil
 	}
@@ -83,7 +83,7 @@ func (p *Proxy) initProxy() error {
 	return nil
 }
 
-func (p *Proxy) Start() error {
+func (p *webProxy) Start() error {
 	if !p.Proxy.Enabled {
 		return nil
 	}
@@ -97,17 +97,17 @@ func (p *Proxy) Start() error {
 	return nil
 }
 
-func (p *Proxy) handleReload(res http.ResponseWriter, req *http.Request) {
+func (p *webProxy) handleReload(res http.ResponseWriter, req *http.Request) {
 	log.Infof("reloading proxy")
 	res.WriteHeader(http.StatusOK)
 }
 
-func (p *Proxy) handleDefault(res http.ResponseWriter, req *http.Request) {
+func (p *webProxy) handleDefault(res http.ResponseWriter, req *http.Request) {
 	duration := time.Duration(p.Proxy.Downstream.Timeout) * time.Second // TODO: calculate at startup
 	p.proxyRequest(res, req, p.Proxy.Downstream.Host, duration, p.injectCode)
 }
 
-func (p *Proxy) proxyRequest(res http.ResponseWriter, req *http.Request, host string, timeout time.Duration, injectCode string) {
+func (p *webProxy) proxyRequest(res http.ResponseWriter, req *http.Request, host string, timeout time.Duration, injectCode string) {
 	ctx, closeFn := context.WithTimeout(req.Context(), timeout)
 	defer closeFn()
 
@@ -218,7 +218,7 @@ func (p *Proxy) proxyRequest(res http.ResponseWriter, req *http.Request, host st
 	}
 }
 
-func (p *Proxy) Stop() error {
+func (p *webProxy) Stop() error {
 	if p.sseServer != nil {
 		p.sseServer.Close()
 	}
@@ -230,7 +230,7 @@ func (p *Proxy) Stop() error {
 	return nil
 }
 
-func (p *Proxy) Notify(msg string) {
+func (p *webProxy) Notify(msg string) {
 	log.Infof("notifying browser: %s", msg)
 	p.sseServer.Publish("hmr", &sse.Event{
 		Data: []byte(msg),

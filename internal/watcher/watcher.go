@@ -49,10 +49,10 @@ type ConsoleCapture interface {
 	Stderr() io.Writer
 }
 
-type HotReloaderOption func(*HotReloader) error
-type HotReloaderCloseFunc func(*HotReloader)
+type HotReloaderOption func(*hotReloader) error
+type HotReloaderCloseFunc func()
 
-type HotReloader struct {
+type hotReloader struct {
 	config.Config
 	envVars        []string
 	excludePaths   []string
@@ -70,31 +70,30 @@ type HotReloader struct {
 }
 
 func WithCloseFunc(fn HotReloaderCloseFunc) HotReloaderOption {
-	return func(r *HotReloader) error {
+	return func(r *hotReloader) error {
 		r.closeFunc = fn
 		return nil
 	}
 }
 
 func WithNotifier(n Notifier) HotReloaderOption {
-	return func(r *HotReloader) error {
+	return func(r *hotReloader) error {
 		r.notifiers = append(r.notifiers, n)
 		return nil
 	}
 }
 
 func WithConsoleCapture(c ConsoleCapture) HotReloaderOption {
-	return func(r *HotReloader) error {
+	return func(r *hotReloader) error {
 		r.consoleCapture = c
 		return nil
 	}
 }
 
-func New(config config.Config, closeFn HotReloaderCloseFunc, opts ...HotReloaderOption) (*HotReloader, error) {
-	reloader := &HotReloader{
+func New(config config.Config, opts ...HotReloaderOption) (*hotReloader, error) {
+	reloader := &hotReloader{
 		Config:         config,
 		notifiers:      []Notifier{},
-		closeFunc:      closeFn,
 		excludePaths:   []string{".git"},
 		envVars:        os.Environ(),
 		childCmdClosed: make(chan bool, 1),
@@ -127,7 +126,7 @@ func New(config config.Config, closeFn HotReloaderCloseFunc, opts ...HotReloader
 	return reloader, nil
 }
 
-func (r *HotReloader) Run() error {
+func (r *hotReloader) Run() error {
 	var err error
 	log.Infof("starting gomon with root directory: %s", r.Config.RootDirectory)
 
@@ -143,7 +142,7 @@ func (r *HotReloader) Run() error {
 	return nil
 }
 
-func (r *HotReloader) Close() error {
+func (r *hotReloader) Close() error {
 	if r.watcher != nil {
 		log.Info("terminating file watcher")
 		err := r.watcher.Close()
@@ -163,7 +162,7 @@ func (r *HotReloader) Close() error {
 	return nil
 }
 
-func (r *HotReloader) runIPCServer(ipcChannel string) error {
+func (r *hotReloader) runIPCServer(ipcChannel string) error {
 	var err error
 	r.ipcServer, err = ipc.StartServer(ipcChannel, nil)
 	if err != nil {
@@ -207,13 +206,13 @@ func (r *HotReloader) runIPCServer(ipcChannel string) error {
 	return nil
 }
 
-func (r *HotReloader) notify(hint string) {
+func (r *hotReloader) notify(hint string) {
 	for _, notifier := range r.notifiers {
 		notifier.Notify(hint)
 	}
 }
 
-func (r *HotReloader) watch() error {
+func (r *hotReloader) watch() error {
 	var err error
 
 	r.watcher, err = fsnotify.NewWatcher()
@@ -248,7 +247,7 @@ func (r *HotReloader) watch() error {
 	return nil
 }
 
-func (r *HotReloader) processFileChange(event fsnotify.Event) {
+func (r *hotReloader) processFileChange(event fsnotify.Event) {
 	filePath, _ := filepath.Abs(event.Name)
 	relPath, err := filepath.Rel(r.Config.RootDirectory, filePath)
 	if err != nil {
@@ -322,7 +321,7 @@ func (r *HotReloader) processFileChange(event fsnotify.Event) {
 	log.Infof("unhandled modified file: %s", relPath)
 }
 
-func (r *HotReloader) runGeneratedTask(task string) error {
+func (r *hotReloader) runGeneratedTask(task string) error {
 	log.Infof("running task: %s", task)
 	args := strings.Split(task, " ")
 	cmd := exec.Command(args[0], args[1:]...)
@@ -338,7 +337,7 @@ func (r *HotReloader) runGeneratedTask(task string) error {
 	return cmd.Wait()
 }
 
-func (r *HotReloader) watchTree() error {
+func (r *hotReloader) watchTree() error {
 	return filepath.Walk(r.Config.RootDirectory, func(srcPath string, f os.FileInfo, err error) error {
 		if err != nil {
 			return err
@@ -350,7 +349,7 @@ func (r *HotReloader) watchTree() error {
 	})
 }
 
-func (r *HotReloader) spawnChild() {
+func (r *hotReloader) spawnChild() {
 	go func() {
 		r.childLock.Lock()
 		defer r.childLock.Unlock()
@@ -405,14 +404,14 @@ func (r *HotReloader) spawnChild() {
 
 		exitStatus := cmd.ProcessState.ExitCode()
 		if exitStatus > 0 && r.closeFunc != nil {
-			r.closeFunc(r)
+			r.closeFunc()
 		}
 
 		r.isRespawning.Store(false)
 	}()
 }
 
-func (r *HotReloader) Respawn() {
+func (r *hotReloader) Respawn() {
 	r.isRespawning.Store(true)
 
 	err := r.closeChild()
@@ -423,7 +422,7 @@ func (r *HotReloader) Respawn() {
 	r.spawnChild()
 }
 
-func (r *HotReloader) closeChild() error {
+func (r *hotReloader) closeChild() error {
 	r.closeLock.Lock()
 	defer r.closeLock.Unlock()
 
@@ -461,7 +460,7 @@ func (r *HotReloader) closeChild() error {
 	return nil
 }
 
-func (r *HotReloader) loadEnvFile(filename string) error {
+func (r *hotReloader) loadEnvFile(filename string) error {
 	if _, err := os.Stat(filename); os.IsNotExist(err) {
 		log.Warnf("env file %s does not exist", filename)
 		return nil
@@ -489,7 +488,7 @@ func (r *HotReloader) loadEnvFile(filename string) error {
 	return nil
 }
 
-func (r *HotReloader) getChildCmd() *exec.Cmd {
+func (r *hotReloader) getChildCmd() *exec.Cmd {
 	if cmd, ok := r.childCmd.Load().(*exec.Cmd); !ok {
 		return nil
 	} else {
@@ -497,6 +496,6 @@ func (r *HotReloader) getChildCmd() *exec.Cmd {
 	}
 }
 
-func (r *HotReloader) setChildCmd(cmd *exec.Cmd) {
+func (r *hotReloader) setChildCmd(cmd *exec.Cmd) {
 	r.childCmd.Store(cmd)
 }

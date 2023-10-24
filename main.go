@@ -38,6 +38,7 @@ func main() {
 	var entrypointArgs []string
 	var envFiles string
 
+	respawn := make(chan bool)
 	quit := make(chan bool)
 
 	fs := flag.NewFlagSet("gomon flags", flag.ExitOnError)
@@ -60,7 +61,7 @@ func main() {
 		} else {
 			curDir, err := os.Getwd()
 			if err != nil {
-				panic(err)
+				log.Fatalf("getting current directory: %v", err)
 			}
 			rootDirectory = curDir
 		}
@@ -113,21 +114,29 @@ func main() {
 		log.Fatalf("starting proxy: %v", err)
 	}
 
-	respawn := make(chan bool)
-	capture := capture.New(*config, capture.WithRespawn(respawn))
-	if capture != nil {
-		err = capture.Start()
+	capture, err := capture.New(*config, capture.WithRespawn(respawn))
+	if err != nil {
+		log.Fatalf("creating capture: %v", err)
+	}
+
+	defer func() {
+		err := capture.Close()
 		if err != nil {
-			log.Fatalf("starting capture: %v", err)
+			log.Errorf("closing capture: %v", err)
 		}
+	}()
+
+	err = capture.Start()
+	if err != nil {
+		log.Fatalf("starting capture: %v", err)
 	}
 
 	w, err := watcher.New(*config,
-		func(w *watcher.HotReloader) {
-			quit <- true
-		},
 		watcher.WithNotifier(proxy),
 		watcher.WithConsoleCapture(capture),
+		watcher.WithCloseFunc(func() {
+			quit <- true
+		}),
 	)
 
 	if err != nil {
