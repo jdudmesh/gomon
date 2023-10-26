@@ -57,6 +57,8 @@ type consoleCapture struct {
 	db           *sqlx.DB
 	currentRunID atomic.Int64
 	respawn      chan bool
+	stdoutWriter chan string
+	stderrWriter chan string
 }
 
 type LogRun struct {
@@ -72,18 +74,16 @@ type LogEvent struct {
 	CreatedAt time.Time `db:"created_at" json:"createdAt"`
 }
 
-type stdoutWriter struct {
-	captureMgr *consoleCapture
-}
-
-type stderrWriter struct {
-	captureMgr *consoleCapture
+type streamWriter struct {
+	eventSink chan string
 }
 
 func New(config config.Config, opts ...ConsoleCaptureOption) (*consoleCapture, error) {
 	cap := &consoleCapture{
-		enabled: config.UI.Enabled,
-		port:    config.UI.Port,
+		enabled:      config.UI.Enabled,
+		port:         config.UI.Port,
+		stdoutWriter: make(chan string),
+		stderrWriter: make(chan string),
 	}
 
 	if !cap.enabled {
@@ -143,23 +143,48 @@ func New(config config.Config, opts ...ConsoleCaptureOption) (*consoleCapture, e
 }
 
 func (c *consoleCapture) Start() error {
-	log.Infof("UI server running on http://localhost:%d", c.port)
 	if !c.enabled {
 		return nil
 	}
+
+	log.Infof("UI server running on http://localhost:%d", c.port)
 
 	go func() {
 		err := c.httpServer.ListenAndServe()
 		log.Infof("shutting down UI server: %v", err)
 	}()
 
+	go func() {
+		for {
+			select {
+			case line := <-c.stdoutWriter:
+				if !c.enabled {
+					os.Stdout.WriteString(line)
+					continue
+				}
+				_, err := c.write("stdout", line)
+				if err != nil {
+					log.Errorf("writing stdout: %v", err)
+				}
+			case line := <-c.stderrWriter:
+				if !c.enabled {
+					os.Stderr.WriteString(line)
+					continue
+				}
+				_, err := c.write("stderr", line)
+				if err != nil {
+					log.Errorf("writing stderr: %v", err)
+				}
+			}
+		}
+	}()
+
 	return nil
 }
 
 func (c *consoleCapture) Close() error {
-	if !c.enabled {
-		return nil
-	}
+	close(c.stdoutWriter)
+	close(c.stderrWriter)
 
 	if c.sseServer != nil {
 		c.sseServer.Close()
@@ -173,11 +198,11 @@ func (c *consoleCapture) Close() error {
 }
 
 func (c *consoleCapture) Stdout() io.Writer {
-	return &stdoutWriter{captureMgr: c}
+	return &streamWriter{eventSink: c.stdoutWriter}
 }
 
 func (c *consoleCapture) Stderr() io.Writer {
-	return &stderrWriter{captureMgr: c}
+	return &streamWriter{eventSink: c.stderrWriter}
 }
 
 func (c *consoleCapture) write(logType, logData string) (int, error) {
@@ -348,16 +373,7 @@ func (c *consoleCapture) handlSearch(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (w *stdoutWriter) Write(p []byte) (int, error) {
-	if w.captureMgr == nil {
-		return os.Stdout.Write(p)
-	}
-	return w.captureMgr.write("stdout", string(p))
-}
-
-func (w *stderrWriter) Write(p []byte) (int, error) {
-	if w.captureMgr == nil {
-		return os.Stderr.Write(p)
-	}
-	return w.captureMgr.write("stderr", string(p))
+func (w *streamWriter) Write(p []byte) (int, error) {
+	w.eventSink <- string(p)
+	return len(p), nil
 }

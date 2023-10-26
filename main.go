@@ -32,78 +32,33 @@ import (
 )
 
 func main() {
-	var configPath string
-	var rootDirectory string
-	var entrypoint string
-	var entrypointArgs []string
-	var envFiles string
-
-	respawn := make(chan bool)
-	quit := make(chan bool)
-
-	fs := flag.NewFlagSet("gomon flags", flag.ExitOnError)
-	fs.StringVar(&configPath, "config", "", "Path to a config file (gomon.config.yml))")
-	fs.StringVar(&rootDirectory, "directory", "", "The directory to watch")
-	fs.StringVar(&envFiles, "env", "", "A comma separated list of env files to load")
-	err := fs.Parse(os.Args[1:])
-	if err != nil {
-		log.Fatalf("parsing flags: %v", err)
-	}
-
-	args := strings.Split(fs.Arg(0), " ")
-	entrypoint = args[0]
-	entrypointArgs = args[1:]
-
-	if rootDirectory == "" {
-		// if no root directory is specified, use the directory of the config file or fallback to the current directory
-		if configPath != "" {
-			rootDirectory = filepath.Base(configPath)
-		} else {
-			curDir, err := os.Getwd()
-			if err != nil {
-				log.Fatalf("getting current directory: %v", err)
-			}
-			rootDirectory = curDir
-		}
-	}
-
-	config, err := config.New(configPath, rootDirectory)
+	config, err := loadConfig()
 	if err != nil {
 		log.Fatalf("loading config: %v", err)
 	}
 
-	if entrypoint != "" {
-		config.Entrypoint = entrypoint
+	if config.Entrypoint == "" {
+		log.Fatalf("entrypoint is required")
 	}
 
-	if len(entrypointArgs) > 0 {
-		config.EntrypointArgs = entrypointArgs
-	}
+	respawn := make(chan bool)
+	defer close(respawn)
 
-	if len(config.HardReload) == 0 {
-		config.HardReload = []string{"*.go", "go.mod", "go.sum"}
-	}
-
-	if len(config.ExcludePaths) == 0 {
-		config.ExcludePaths = []string{"vendor"}
-	}
-	config.ExcludePaths = append(config.ExcludePaths, ".gomon/")
-
-	if envFiles != "" {
-		config.EnvFiles = strings.Split(envFiles, ",")
-	}
+	quit := make(chan bool)
+	defer close(quit)
 
 	err = os.Chdir(config.RootDirectory)
 	if err != nil {
 		log.Fatalf("Cannot set working directory: %v", err)
 	}
 
+	// init the web proxy
 	proxy, err := proxy.New(*config)
 	if err != nil {
 		log.Fatalf("creating proxy: %v", err)
 	}
 	defer func() {
-		err := proxy.Stop()
+		err := proxy.Close()
 		if err != nil {
 			log.Fatalf("stopping proxy: %v", err)
 		}
@@ -114,6 +69,7 @@ func main() {
 		log.Fatalf("starting proxy: %v", err)
 	}
 
+	// init the console output capture
 	capture, err := capture.New(*config, capture.WithRespawn(respawn))
 	if err != nil {
 		log.Fatalf("creating capture: %v", err)
@@ -131,6 +87,7 @@ func main() {
 		log.Fatalf("starting capture: %v", err)
 	}
 
+	// init the file system watcher/process spawner
 	w, err := watcher.New(*config,
 		watcher.WithNotifier(proxy),
 		watcher.WithConsoleCapture(capture),
@@ -149,15 +106,18 @@ func main() {
 		log.Fatalf("running monitor: %v", err)
 	}
 
+	// all components should be up and running by now
+	pid := os.Getpid()
+	log.Infof("gomon started with pid %d", pid)
+
+	// listen for respawn events from other components e.g. the web UI
 	go func() {
 		for range respawn {
 			w.Respawn()
 		}
 	}()
 
-	pid := os.Getpid()
-	log.Infof("gomon started with pid %d", pid)
-
+	// wait for quit signal
 	sigint := make(chan os.Signal, 1)
 	signal.Notify(sigint, os.Interrupt, syscall.SIGTERM)
 	select {
@@ -167,5 +127,65 @@ func main() {
 		log.Info("received quit, exiting")
 	}
 
-	close(respawn)
+}
+
+func loadConfig() (*config.Config, error) {
+	var configPath string
+	var rootDirectory string
+	var entrypoint string
+	var entrypointArgs []string
+	var envFiles string
+
+	fs := flag.NewFlagSet("gomon flags", flag.ExitOnError)
+	fs.StringVar(&configPath, "conf", "", "Path to a config file (gomon.config.yml))")
+	fs.StringVar(&rootDirectory, "dir", "", "The directory to watch")
+	fs.StringVar(&envFiles, "env", "", "A comma separated list of env files to load")
+	err := fs.Parse(os.Args[1:])
+	if err != nil {
+		log.Fatalf("parsing flags: %v", err)
+	}
+
+	args := strings.Split(fs.Arg(0), " ")
+	entrypoint = args[0]
+	entrypointArgs = args[1:]
+
+	if rootDirectory == "" {
+		curDir, err := os.Getwd()
+		if err != nil {
+			log.Fatalf("getting current directory: %v", err)
+		}
+		rootDirectory = curDir
+	}
+
+	if configPath == "" {
+		nextConfigPath := filepath.Join(rootDirectory, config.DefaultConfigFileName)
+		if _, err := os.Stat(nextConfigPath); err == nil {
+			configPath = nextConfigPath
+		} else if !os.IsNotExist(err) {
+			log.Fatalf("checking for default config file: %v", err)
+		}
+	}
+
+	config, err := config.New(configPath)
+	if err != nil {
+		log.Fatalf("loading config: %v", err)
+	}
+
+	if config.RootDirectory == "" {
+		config.RootDirectory = rootDirectory
+	}
+
+	if entrypoint != "" {
+		config.Entrypoint = entrypoint
+	}
+
+	if len(entrypointArgs) > 0 {
+		config.EntrypointArgs = entrypointArgs
+	}
+
+	if envFiles != "" {
+		config.EnvFiles = strings.Split(envFiles, ",")
+	}
+
+	return config, nil
 }

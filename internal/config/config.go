@@ -20,13 +20,12 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path"
 
 	log "github.com/sirupsen/logrus"
 	"gopkg.in/yaml.v3"
 )
 
-const defaultConfigFileName = "gomon.config.yml"
+const DefaultConfigFileName = "gomon.config.yml"
 
 type Config struct {
 	RootDirectory  string              `yaml:"rootDirectory"`
@@ -51,21 +50,28 @@ type Config struct {
 	} `yaml:"ui"`
 }
 
-func New(configPath, rootDirectory string) (*Config, error) {
+var defaultConfig = Config{
+	HardReload:   []string{"*.go", "go.mod", "go.sum"},
+	SoftReload:   []string{"*.html", "*.css", "*.js"},
+	ExcludePaths: []string{".gomon", "vendor"},
+}
+
+func New(configPath string) (*Config, error) {
+	if configPath == "" {
+		return &defaultConfig, nil
+	}
+
 	config := &Config{}
 
-	filename := configPath
-	if len(filename) == 0 {
-		filename = path.Join(rootDirectory, "./"+defaultConfigFileName)
-	}
-
-	if _, err := os.Stat(filename); os.IsNotExist(err) {
+	if _, err := os.Stat(configPath); os.IsNotExist(err) {
 		log.Warn("could not find valid config file")
 		return config, nil
+	} else if err != nil {
+		return nil, fmt.Errorf("checking for config file: %w", err)
 	}
 
-	log.Infof("loading config from %s", filename)
-	f, err := os.Open(filename)
+	log.Infof("loading config from %s", configPath)
+	f, err := os.Open(configPath)
 	if err != nil {
 		return nil, fmt.Errorf("opening config file: %w", err)
 	}
@@ -80,10 +86,18 @@ func New(configPath, rootDirectory string) (*Config, error) {
 		return nil, fmt.Errorf("unmarhsalling config: %w", err)
 	}
 
-	// override config with flags if set
-	if config.RootDirectory == "" {
-		config.RootDirectory = rootDirectory
+	if findIndex(config.ExcludePaths, ".gomon") < 0 {
+		config.ExcludePaths = append(config.ExcludePaths, ".gomon")
 	}
 
 	return config, nil
+}
+
+func findIndex(array []string, target string) int {
+	for i, value := range array {
+		if value == target {
+			return i
+		}
+	}
+	return -1
 }

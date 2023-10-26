@@ -218,7 +218,7 @@ func (p *webProxy) proxyRequest(res http.ResponseWriter, req *http.Request, host
 	}
 }
 
-func (p *webProxy) Stop() error {
+func (p *webProxy) Close() error {
 	if p.sseServer != nil {
 		p.sseServer.Close()
 	}

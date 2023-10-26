@@ -38,16 +38,15 @@ This will simply `go run` your project and restart on changes to `*.go` files.
 
 `gomon` supports a number of command line parameters:
 ```
---config   - specify a config file (see below)
---directory     - use an alternative root directory
---env      - a comma separated list of environment variable files to load e.g. .env,.env.local
-
+--conf - specify a config file (see below)
+--dir  - use an alternative root directory
+--env  - a comma separated list of environment variable files to load e.g. .env,.env.local
 ```
+
 ## Working Directory
 The working directory for `gomon` is the current directory unless:
 1. if a root directory is specified then that is used
-2. otherwise, if a config file is specified then the directory containing the file is used
-3. otherwise, if specified in the config file that is used
+2. otherwise, if specified in the config file that is used
 3. otherwise, the current directory is used
 
 ## Config files
