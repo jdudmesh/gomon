@@ -18,6 +18,7 @@ For example usage see [this example](https://github.com/jdudmesh/gomon-example)
 * Proxy http requests to the downstream project and automatically inject an HMR script
 * Fire a page reload in the browser on hard or soft restart using SSE
 * Implements a Web UI which displays and can search console logs with history
+* prestart - run a list of tasks before running the main entrypoint e.g. `go generate`
 
 # Usage
 
@@ -70,6 +71,9 @@ entrypointArgs: [<array of args>]
 excludePaths: [<array of relative paths to exlude from watch>]
 hardReload: [<array of glob patterns to force hard reload>]
 softReload: [<array of glob patterns to force soft reload>]
+
+prestart: # these tasks will always run before `go run <entrypoint>` e.g. `go generate`
+    - <list tasks to run>
 
 generated:
   <glob pattern>:

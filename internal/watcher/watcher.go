@@ -298,7 +298,7 @@ func (r *hotReloader) processFileChange(event fsnotify.Event) {
 					}
 					continue
 				}
-				err := r.runGeneratedTask(task)
+				err := r.runOOBTask(task)
 				if err != nil {
 					log.Errorf("running generated task: %+v", err)
 				}
@@ -321,7 +321,7 @@ func (r *hotReloader) processFileChange(event fsnotify.Event) {
 	log.Infof("unhandled modified file: %s", relPath)
 }
 
-func (r *hotReloader) runGeneratedTask(task string) error {
+func (r *hotReloader) runOOBTask(task string) error {
 	log.Infof("running task: %s", task)
 	args := strings.Split(task, " ")
 	cmd := exec.Command(args[0], args[1:]...)
@@ -354,10 +354,16 @@ func (r *hotReloader) spawnChild() {
 		r.childLock.Lock()
 		defer r.childLock.Unlock()
 
+		err := r.executePrestart()
+		if err != nil {
+			log.Errorf("running prestart: %+v", err)
+			return
+		}
+
 		r.consoleCapture.Respawning()
 
 		ipcChannel := "gomon-" + uuid.New().String()
-		err := r.runIPCServer(ipcChannel)
+		err = r.runIPCServer(ipcChannel)
 		if err != nil {
 			log.Errorf("starting ipc server: %+v", err)
 		}
@@ -409,6 +415,16 @@ func (r *hotReloader) spawnChild() {
 
 		r.isRespawning.Store(false)
 	}()
+}
+
+func (r *hotReloader) executePrestart() error {
+	for _, task := range r.Config.Prestart {
+		err := r.runOOBTask(task)
+		if err != nil {
+			return fmt.Errorf("running prestart task: %w", err)
+		}
+	}
+	return nil
 }
 
 func (r *hotReloader) Respawn() {
