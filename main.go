@@ -18,42 +18,45 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"os"
 	"os/signal"
+	"path"
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
-	"github.com/jdudmesh/gomon/internal/capture"
 	"github.com/jdudmesh/gomon/internal/config"
+	"github.com/jdudmesh/gomon/internal/console"
+	"github.com/jdudmesh/gomon/internal/process"
 	"github.com/jdudmesh/gomon/internal/proxy"
 	"github.com/jdudmesh/gomon/internal/watcher"
+	"github.com/jdudmesh/gomon/internal/webui"
+	"github.com/jmoiron/sqlx"
 	log "github.com/sirupsen/logrus"
 )
 
 func main() {
-	config, err := loadConfig()
+	cfg, err := loadConfig()
 	if err != nil {
 		log.Fatalf("loading config: %v", err)
 	}
 
-	if config.Entrypoint == "" {
+	if cfg.Entrypoint == "" {
 		log.Fatalf("entrypoint is required")
 	}
 
-	respawn := make(chan bool)
-	defer close(respawn)
+	hardRestart := make(chan bool)
+	defer close(hardRestart)
 
-	quit := make(chan bool)
-	defer close(quit)
-
-	err = os.Chdir(config.RootDirectory)
+	err = os.Chdir(cfg.RootDirectory)
 	if err != nil {
 		log.Fatalf("Cannot set working directory: %v", err)
 	}
 
 	// init the web proxy
-	proxy, err := proxy.New(*config)
+	proxy, err := proxy.New(cfg)
 	if err != nil {
 		log.Fatalf("creating proxy: %v", err)
 	}
@@ -69,62 +72,109 @@ func main() {
 		log.Fatalf("starting proxy: %v", err)
 	}
 
-	// init the console output capture
-	capture, err := capture.New(*config, capture.WithRespawn(respawn))
+	// TODO split console enabled from web UI enabled
+	// open the database (if enabled)
+	var db *sqlx.DB
+	if cfg.UI.Enabled {
+		db, err = createDatabase(cfg)
+		if err != nil {
+			log.Fatalf("creating database: %v", err)
+		}
+		defer func() {
+			log.Info("closing database")
+			db.Close()
+		}()
+	}
+
+	// create the console redirector
+	console, err := console.New(cfg, db)
 	if err != nil {
-		log.Fatalf("creating capture: %v", err)
+		log.Fatalf("creating console: %v", err)
 	}
 
 	defer func() {
-		err := capture.Close()
+		err := console.Close()
 		if err != nil {
-			log.Errorf("closing capture: %v", err)
+			log.Errorf("closing console: %v", err)
 		}
 	}()
 
-	err = capture.Start()
+	err = console.Start()
 	if err != nil {
-		log.Fatalf("starting capture: %v", err)
+		log.Fatalf("starting console: %v", err)
 	}
 
-	// init the file system watcher/process spawner
-	w, err := watcher.New(*config,
-		watcher.WithNotifier(proxy),
-		watcher.WithConsoleCapture(capture),
-		watcher.WithCloseFunc(func() {
-			quit <- true
-		}),
-	)
+	// TODO - this is a hack to give the child process time to close down and all console output to be flushed
+	time.Sleep(1 * time.Second)
 
+	// init the child process
+	childProcess, err := process.New(cfg,
+		process.WithConsoleOutput(console),
+		process.WithHMRListener(proxy.EventSink()))
+	if err != nil {
+		log.Fatalf("creating child process: %v", err)
+	}
+	defer childProcess.Close()
+
+	// init the file system watcher/process spawner
+	watcher, err := watcher.New(cfg, childProcess)
 	if err != nil {
 		log.Fatalf("creating monitor: %v", err)
 	}
-	defer w.Close()
+	defer watcher.Close()
 
-	err = w.Run()
-	if err != nil {
-		log.Fatalf("running monitor: %v", err)
+	// init the web UI
+	if cfg.UI.Enabled {
+		server, err := webui.New(cfg, childProcess, db)
+		if err != nil {
+			log.Fatalf("creating web UI: %v", err)
+		}
+		defer func() {
+			console.RemoveEventSink(server.EventSink())
+			server.Close()
+		}()
+
+		console.AddEventSink(server.EventSink())
+		err = server.Start()
+		if err != nil {
+			log.Fatalf("starting web UI: %v", err)
+		}
 	}
 
 	// all components should be up and running by now
 	pid := os.Getpid()
 	log.Infof("gomon started with pid %d", pid)
 
-	// listen for respawn events from other components e.g. the web UI
+	// start listening for file changes
+	err = watcher.Run()
+	if err != nil {
+		log.Fatalf("running monitor: %v", err)
+	}
+
+	// listen for restart events from other components e.g. the web UI
 	go func() {
-		for range respawn {
-			w.Respawn()
+		for range hardRestart {
+			err := childProcess.HardRestart(process.ForceHardRestart)
+			if err != nil {
+				log.Errorf("hard restart: %v", err)
+			}
 		}
 	}()
 
-	// wait for quit signal
+	// listen for quit signal
 	sigint := make(chan os.Signal, 1)
-	signal.Notify(sigint, os.Interrupt, syscall.SIGTERM)
-	select {
-	case <-sigint:
-		log.Info("received signal, exiting")
-	case <-quit:
-		log.Info("received quit, exiting")
+	defer close(sigint)
+	go func() {
+		signal.Notify(sigint, os.Interrupt, syscall.SIGTERM)
+		for range sigint {
+			childProcess.Close()
+			log.Info("received signal, exiting")
+		}
+	}()
+
+	err = childProcess.Start()
+	if err != nil {
+		log.Fatalf("starting child process: %v", err)
 	}
 
 }
@@ -166,26 +216,71 @@ func loadConfig() (*config.Config, error) {
 		}
 	}
 
-	config, err := config.New(configPath)
+	cfg, err := config.New(configPath)
 	if err != nil {
 		log.Fatalf("loading config: %v", err)
 	}
 
-	if config.RootDirectory == "" {
-		config.RootDirectory = rootDirectory
+	if cfg.RootDirectory == "" {
+		cfg.RootDirectory = rootDirectory
 	}
 
 	if entrypoint != "" {
-		config.Entrypoint = entrypoint
+		cfg.Entrypoint = entrypoint
 	}
 
 	if len(entrypointArgs) > 0 {
-		config.EntrypointArgs = entrypointArgs
+		cfg.EntrypointArgs = entrypointArgs
 	}
 
 	if envFiles != "" {
-		config.EnvFiles = strings.Split(envFiles, ",")
+		cfg.EnvFiles = strings.Split(envFiles, ",")
 	}
 
-	return config, nil
+	return cfg, nil
 }
+
+func createDatabase(config *config.Config) (*sqlx.DB, error) {
+	dataPath := path.Join(config.RootDirectory, "./.gomon")
+	_, err := os.Stat(dataPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			err = os.Mkdir(dataPath, 0755)
+			if err != nil {
+				return nil, fmt.Errorf("creating .gomon directory: %w", err)
+			}
+		} else {
+			return nil, fmt.Errorf("checking for .gomon directory: %w", err)
+		}
+	}
+
+	db, err := sqlx.Connect("sqlite3", path.Join(dataPath, "./gomon.db"))
+	if err != nil {
+		return nil, fmt.Errorf("connecting to sqlite: %w", err)
+	}
+
+	_, err = db.Exec(schema)
+	if err != nil {
+		return nil, fmt.Errorf("creating db schema: %w", err)
+	}
+
+	return db, nil
+}
+
+var schema = `
+CREATE TABLE IF NOT EXISTS runs (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_runs_created_at ON runs(created_at);
+
+CREATE TABLE IF NOT EXISTS events (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	run_id INTEGER NOT NULL,
+	event_type TEXT NOT NULL,
+	event_data TEXT NOT NULL,
+	created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_events_event_type ON events(event_type);
+CREATE INDEX IF NOT EXISTS idx_events_created_at ON events(created_at);
+`

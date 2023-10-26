@@ -59,9 +59,11 @@ The config file is a YAML file as follows:
 entrypoint:
 entrypointArgs:
 templatePathGlob: <relative path + glob to template directory>
-envFiles:
+
+envFiles: # changes to env files always trigger a hard reload
   - <env file e.g. .env>
   - ...
+
 reloadOnUnhandled: true|false #if true then any file changes (not just .go files) will restart process
 
 rootDirectory: <path to root>

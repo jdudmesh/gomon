@@ -62,11 +62,11 @@ func New(configPath string) (*Config, error) {
 		return &defaultConfig, nil
 	}
 
-	config := &Config{}
+	cfg := &Config{}
 
 	if _, err := os.Stat(configPath); os.IsNotExist(err) {
 		log.Warn("could not find valid config file")
-		return config, nil
+		return cfg, nil
 	} else if err != nil {
 		return nil, fmt.Errorf("checking for config file: %w", err)
 	}
@@ -83,15 +83,15 @@ func New(configPath string) (*Config, error) {
 		return nil, fmt.Errorf("reading config file: %w", err)
 	}
 
-	if err := yaml.Unmarshal(data, config); err != nil {
+	if err := yaml.Unmarshal(data, cfg); err != nil {
 		return nil, fmt.Errorf("unmarhsalling config: %w", err)
 	}
 
-	if findIndex(config.ExcludePaths, ".gomon") < 0 {
-		config.ExcludePaths = append(config.ExcludePaths, ".gomon")
+	if findIndex(cfg.ExcludePaths, ".gomon") < 0 {
+		cfg.ExcludePaths = append(cfg.ExcludePaths, ".gomon")
 	}
 
-	return config, nil
+	return cfg, nil
 }
 
 func findIndex(array []string, target string) int {

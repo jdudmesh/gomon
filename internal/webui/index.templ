@@ -1,15 +1,34 @@
-package capture
+package webui
 
-import "strconv"
+// gomon is a simple command line tool that watches your files and automatically restarts the application when it detects any changes in the working directory.
+// Copyright (C) 2023 John Dudmesh
 
-templ Event(ev LogEvent) {
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+import (
+	"strconv"
+	"github.com/jdudmesh/gomon/internal/console"
+)
+
+templ Event(ev *console.LogEvent) {
 	<div class="flex flex-row text-blue-400 font-mono" data-event-date="{ev.CreatedAt}">
 		<div class="w-1/6">{ ev.CreatedAt.Format("15:04:05.000") }</div>
 		<div class="w-5/6 break-all">{ ev.EventData }</div>
 	</div>
 }
 
-templ EventList(events []LogEvent) {
+templ EventList(events []*console.LogEvent) {
 	for _, ev := range events {
 		<div class="flex flex-row text-blue-400 font-mono" data-event-date="{ev.CreatedAt}">
 			<div class="w-1/6">{ ev.CreatedAt.Format("15:04:05.000") }</div>
@@ -18,7 +37,7 @@ templ EventList(events []LogEvent) {
 	}
 }
 
-templ Console(currentRun int, runs []LogRun, events []LogEvent) {
+templ Console(currentRun int, runs []*console.LogRun, events []*console.LogEvent) {
 	<!DOCTYPE html>
 	<html>
 		<head>
@@ -54,7 +73,7 @@ templ Console(currentRun int, runs []LogRun, events []LogEvent) {
 						}
 					</select>
 					<button id="btn-search" class="btn btn-primary" hx-get="/search" hx-include="[data-send=&#39;true&#39;]" hx-target="#event-list" hx-trigger="click">Search</button>
-					<button id="btn-restart" class="btn btn-secondary" @click="hardRestart">Hard Restart</button>
+					<button id="btn-restart" class="btn btn-secondary" hx-post="/restart">Hard Restart</button>
 				</div>
 			</nav>
 			<main id="event-list" class="grow mx-4 my-2 p-4 border-solid border border-blue-400 rounded-lg flex flex-col overflow-y-auto">
@@ -88,13 +107,6 @@ templ Console(currentRun int, runs []LogRun, events []LogEvent) {
 
 				function clearConsole() {
 					eventList.innerHTML = "";
-				}
-
-				async function hardRestart() {
-					console.log("hard restart");
-					const res = await fetch("/restart", {
-						method: "POST"
-					})
 				}
 
 				listen();

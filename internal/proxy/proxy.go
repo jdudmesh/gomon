@@ -1,5 +1,21 @@
 package proxy
 
+// gomon is a simple command line tool that watches your files and automatically restarts the application when it detects any changes in the working directory.
+// Copyright (C) 2023 John Dudmesh
+
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 import (
 	"context"
 	"errors"
@@ -28,14 +44,15 @@ const headTag = `<head>`
 
 type webProxy struct {
 	config.Config
+	eventSink  chan string
 	httpServer *http.Server
 	sseServer  *sse.Server
 	injectCode string
 }
 
-func New(config config.Config) (*webProxy, error) {
+func New(cfg *config.Config) (*webProxy, error) {
 	proxy := &webProxy{
-		Config: config,
+		Config: *cfg,
 	}
 
 	err := proxy.initProxy()
@@ -94,7 +111,34 @@ func (p *webProxy) Start() error {
 		log.Infof("shutting down proxy server: %v", err)
 	}()
 
+	go func() {
+		for msg := range p.eventSink {
+			log.Infof("notifying browser: %s", msg)
+			p.sseServer.Publish("hmr", &sse.Event{
+				Data: []byte(msg),
+			})
+		}
+	}()
+
 	return nil
+}
+
+func (p *webProxy) Close() error {
+	if p.sseServer != nil {
+		p.sseServer.Close()
+	}
+
+	if p.httpServer != nil {
+		return p.httpServer.Shutdown(context.Background())
+	}
+
+	close(p.eventSink)
+
+	return nil
+}
+
+func (p *webProxy) EventSink() chan string {
+	return p.eventSink
 }
 
 func (p *webProxy) handleReload(res http.ResponseWriter, req *http.Request) {
@@ -216,23 +260,4 @@ func (p *webProxy) proxyRequest(res http.ResponseWriter, req *http.Request, host
 			return
 		}
 	}
-}
-
-func (p *webProxy) Close() error {
-	if p.sseServer != nil {
-		p.sseServer.Close()
-	}
-
-	if p.httpServer != nil {
-		return p.httpServer.Shutdown(context.Background())
-	}
-
-	return nil
-}
-
-func (p *webProxy) Notify(msg string) {
-	log.Infof("notifying browser: %s", msg)
-	p.sseServer.Publish("hmr", &sse.Event{
-		Data: []byte(msg),
-	})
 }

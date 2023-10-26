@@ -17,93 +17,40 @@ package watcher
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import (
-	"bufio"
 	"fmt"
-	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
-	"sync"
-	"sync/atomic"
-	"syscall"
-	"time"
 
 	"github.com/fsnotify/fsnotify"
-	"github.com/google/uuid"
-	ipc "github.com/james-barrow/golang-ipc"
-	gomonclient "github.com/jdudmesh/gomon-client"
 	"github.com/jdudmesh/gomon/internal/config"
+	"github.com/jdudmesh/gomon/internal/process"
 	log "github.com/sirupsen/logrus"
 )
 
-const ipcStatusDisconnected = "Disconnected"
-
-type Notifier interface {
-	Notify(string)
+type ChildProcess interface {
+	HardRestart(string) error
+	SoftRestart(string) error
+	RunOutOfBandTask(string) error
 }
 
-type ConsoleCapture interface {
-	Respawning()
-	Stdout() io.Writer
-	Stderr() io.Writer
-}
+type HotReloaderOption func(*filesystemWatcher) error
 
-type HotReloaderOption func(*hotReloader) error
-type HotReloaderCloseFunc func()
-
-type hotReloader struct {
+type filesystemWatcher struct {
 	config.Config
-	envVars        []string
-	excludePaths   []string
-	watcher        *fsnotify.Watcher
-	childCmd       atomic.Value
-	childCmdClosed chan bool
-	childLock      sync.Mutex
-	closeLock      sync.Mutex
-	closeFunc      HotReloaderCloseFunc
-	killTimeout    time.Duration // TODO: make configurable
-	isRespawning   atomic.Bool
-	ipcServer      *ipc.Server
-	notifiers      []Notifier
-	consoleCapture ConsoleCapture
+	childProcess ChildProcess
+	excludePaths []string
+	watcher      *fsnotify.Watcher
 }
 
-func WithCloseFunc(fn HotReloaderCloseFunc) HotReloaderOption {
-	return func(r *hotReloader) error {
-		r.closeFunc = fn
-		return nil
-	}
-}
-
-func WithNotifier(n Notifier) HotReloaderOption {
-	return func(r *hotReloader) error {
-		r.notifiers = append(r.notifiers, n)
-		return nil
-	}
-}
-
-func WithConsoleCapture(c ConsoleCapture) HotReloaderOption {
-	return func(r *hotReloader) error {
-		r.consoleCapture = c
-		return nil
-	}
-}
-
-func New(config config.Config, opts ...HotReloaderOption) (*hotReloader, error) {
-	reloader := &hotReloader{
-		Config:         config,
-		notifiers:      []Notifier{},
-		excludePaths:   []string{".git"},
-		envVars:        os.Environ(),
-		childCmdClosed: make(chan bool, 1),
-		childLock:      sync.Mutex{},
-		closeLock:      sync.Mutex{},
-		killTimeout:    5 * time.Second,
-		isRespawning:   atomic.Bool{},
+func New(cfg *config.Config, childProcess ChildProcess, opts ...HotReloaderOption) (*filesystemWatcher, error) {
+	reloader := &filesystemWatcher{
+		Config:       *cfg,
+		childProcess: childProcess,
+		excludePaths: []string{".git", ".vscode", ".idea"},
 	}
 
-	reloader.excludePaths = append(reloader.excludePaths, config.ExcludePaths...)
+	reloader.excludePaths = append(reloader.excludePaths, cfg.ExcludePaths...)
 
 	for _, opt := range opts {
 		err := opt(reloader)
@@ -112,110 +59,36 @@ func New(config config.Config, opts ...HotReloaderOption) (*hotReloader, error) 
 		}
 	}
 
-	if reloader.Config.Entrypoint == "" {
-		return nil, fmt.Errorf("An entrypoint is required")
-	}
-
-	for _, file := range reloader.Config.EnvFiles {
-		err := reloader.loadEnvFile(file)
-		if err != nil {
-			return nil, fmt.Errorf("loading env file: %w", err)
-		}
-	}
-
 	return reloader, nil
 }
 
-func (r *hotReloader) Run() error {
+func (w *filesystemWatcher) Run() error {
 	var err error
-	log.Infof("starting gomon with root directory: %s", r.Config.RootDirectory)
+	log.Infof("starting gomon with root directory: %s", w.Config.RootDirectory)
 
-	r.isRespawning.Store(false)
-
-	err = r.watch()
+	err = w.watch()
 	if err != nil {
 		return err
 	}
 
-	r.spawnChild()
-
 	return nil
 }
 
-func (r *hotReloader) Close() error {
-	if r.watcher != nil {
+func (w *filesystemWatcher) Close() error {
+	if w.watcher != nil {
 		log.Info("terminating file watcher")
-		err := r.watcher.Close()
+		err := w.watcher.Close()
 		if err != nil {
 			return fmt.Errorf("closing watcher: %w", err)
 		}
 	}
-
-	log.Info("closing IPC server")
-	r.ipcServer.Close()
-
-	err := r.closeChild()
-	if err != nil {
-		return fmt.Errorf("terminating child process: %w", err)
-	}
-
 	return nil
 }
 
-func (r *hotReloader) runIPCServer(ipcChannel string) error {
-	var err error
-	r.ipcServer, err = ipc.StartServer(ipcChannel, nil)
-	if err != nil {
-		return fmt.Errorf("ipc server: %w", err)
-	}
-
-	go func() {
-		for {
-			msg, err := r.ipcServer.Read()
-			if err != nil {
-				log.Errorf("ipc read: %+v", err)
-				continue
-			}
-
-			switch msg.MsgType {
-			case gomonclient.MsgTypeReloaded:
-				r.notify(string(msg.Data))
-
-			case gomonclient.MsgTypePing:
-				err := r.ipcServer.Write(gomonclient.MsgTypePong, nil)
-				if err != nil {
-					log.Errorf("ipc write: %+v", err)
-				}
-
-			case gomonclient.MsgTypeStartup:
-				r.notify("#gomon:startup#")
-
-			case gomonclient.MsgTypeInternal:
-				log.Debugf("Internal message received: %+v", msg)
-				if msg.Status == ipcStatusDisconnected {
-					log.Info("IPC server closed")
-					return
-				}
-
-			default:
-				log.Warnf("unhandled ipc message type: %d", msg.MsgType)
-			}
-		}
-	}()
-
-	return nil
-}
-
-func (r *hotReloader) notify(hint string) {
-	for _, notifier := range r.notifiers {
-		notifier.Notify(hint)
-	}
-}
-
-func (r *hotReloader) watch() error {
+func (w *filesystemWatcher) watch() error {
 	var err error
 
-	r.watcher, err = fsnotify.NewWatcher()
+	w.watcher, err = fsnotify.NewWatcher()
 	if err != nil {
 		return fmt.Errorf("watcher: %+v", err)
 	}
@@ -223,14 +96,14 @@ func (r *hotReloader) watch() error {
 	go func() {
 		for {
 			select {
-			case event, ok := <-r.watcher.Events:
+			case event, ok := <-w.watcher.Events:
 				if !ok {
 					return
 				}
 				if event.Has(fsnotify.Write) {
-					r.processFileChange(event)
+					w.processFileChange(event)
 				}
-			case err, ok := <-r.watcher.Errors:
+			case err, ok := <-w.watcher.Errors:
 				log.Errorf("watcher: %+v", err)
 				if !ok {
 					return
@@ -239,7 +112,7 @@ func (r *hotReloader) watch() error {
 		}
 	}()
 
-	err = r.watchTree()
+	err = w.watchTree()
 	if err != nil {
 		return fmt.Errorf("adding watcher for root path: %w", err)
 	}
@@ -247,58 +120,64 @@ func (r *hotReloader) watch() error {
 	return nil
 }
 
-func (r *hotReloader) processFileChange(event fsnotify.Event) {
+func (w *filesystemWatcher) processFileChange(event fsnotify.Event) {
 	filePath, _ := filepath.Abs(event.Name)
-	relPath, err := filepath.Rel(r.Config.RootDirectory, filePath)
+	relPath, err := filepath.Rel(w.Config.RootDirectory, filePath)
 	if err != nil {
 		log.Errorf("failed to get relative path for %s: %+v", filePath, err)
 		relPath = filePath
 	}
 
-	for _, exclude := range r.excludePaths {
+	for _, exclude := range w.excludePaths {
 		if strings.HasPrefix(relPath, exclude) {
 			log.Debugf("excluded file: %s", relPath)
 			return
 		}
 	}
 
-	for _, hard := range r.Config.HardReload {
+	for _, hard := range w.Config.HardReload {
 		if match, _ := filepath.Match(hard, filepath.Base(filePath)); match {
-			log.Infof("hard reload: %s", relPath)
-			r.Respawn()
-			return
-		}
-	}
-
-	for _, soft := range r.Config.SoftReload {
-		if match, _ := filepath.Match(soft, filepath.Base(filePath)); match {
-			log.Infof("soft reload: %s", relPath)
-			err := r.ipcServer.Write(gomonclient.MsgTypeReload, []byte(relPath))
+			log.Infof("hard restart: %s", relPath)
+			err := w.childProcess.HardRestart(relPath)
 			if err != nil {
-				log.Errorf("ipc write: %+v", err)
+				log.Errorf("hard restart: %+v", err)
 			}
 			return
 		}
 	}
 
-	for patt, generated := range r.Config.Generated {
+	for _, soft := range w.Config.SoftReload {
+		if match, _ := filepath.Match(soft, filepath.Base(filePath)); match {
+			log.Infof("soft restart: %s", relPath)
+			err := w.childProcess.SoftRestart(relPath)
+			if err != nil {
+				log.Errorf("soft restart: %+v", err)
+			}
+			return
+		}
+	}
+
+	for patt, generated := range w.Config.Generated {
 		if match, _ := filepath.Match(patt, filepath.Base(filePath)); match {
 			log.Infof("generated file source: %s", relPath)
 			for _, task := range generated {
-				if task == "__hard_reload" {
-					log.Infof("hard reload: %s", relPath)
-					r.Respawn()
-					continue
-				}
-				if task == "__soft_reload" {
-					log.Infof("soft reload: %s", relPath)
-					err := r.ipcServer.Write(gomonclient.MsgTypeReload, []byte(relPath))
+				if task == process.ForceHardRestart {
+					log.Infof("hard restart: %s", relPath)
+					err := w.childProcess.HardRestart(relPath)
 					if err != nil {
-						log.Errorf("ipc write: %+v", err)
+						log.Errorf("hard restart: %+v", err)
 					}
 					continue
 				}
-				err := r.runOOBTask(task)
+				if task == process.ForceSoftRestart {
+					log.Infof("soft restart: %s", relPath)
+					err = w.childProcess.SoftRestart(relPath)
+					if err != nil {
+						log.Errorf("hard restart: %+v", err)
+					}
+					continue
+				}
+				err := w.childProcess.RunOutOfBandTask(task)
 				if err != nil {
 					log.Errorf("running generated task: %+v", err)
 				}
@@ -307,12 +186,15 @@ func (r *hotReloader) processFileChange(event fsnotify.Event) {
 		return
 	}
 
-	if r.Config.EnvFiles != nil {
+	if w.Config.EnvFiles != nil {
 		f := filepath.Base(filePath)
-		for _, envFile := range r.Config.EnvFiles {
+		for _, envFile := range w.Config.EnvFiles {
 			if f == envFile {
 				log.Infof("modified env file: %s", relPath)
-				r.Respawn()
+				err := w.childProcess.HardRestart(relPath)
+				if err != nil {
+					log.Errorf("hard restart: %+v", err)
+				}
 				return
 			}
 		}
@@ -321,197 +203,14 @@ func (r *hotReloader) processFileChange(event fsnotify.Event) {
 	log.Infof("unhandled modified file: %s", relPath)
 }
 
-func (r *hotReloader) runOOBTask(task string) error {
-	log.Infof("running task: %s", task)
-	args := strings.Split(task, " ")
-	cmd := exec.Command(args[0], args[1:]...)
-	cmd.Dir = r.Config.RootDirectory
-	cmd.Stdout = r.consoleCapture.Stdout()
-	cmd.Stderr = r.consoleCapture.Stderr()
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Env = r.envVars
-	err := cmd.Start()
-	if err != nil {
-		return fmt.Errorf("starting task: %w", err)
-	}
-	return cmd.Wait()
-}
-
-func (r *hotReloader) watchTree() error {
-	return filepath.Walk(r.Config.RootDirectory, func(srcPath string, f os.FileInfo, err error) error {
+func (w *filesystemWatcher) watchTree() error {
+	return filepath.Walk(w.Config.RootDirectory, func(srcPath string, f os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
 		if f.IsDir() {
-			return r.watcher.Add(srcPath)
+			return w.watcher.Add(srcPath)
 		}
 		return nil
 	})
-}
-
-func (r *hotReloader) spawnChild() {
-	go func() {
-		r.childLock.Lock()
-		defer r.childLock.Unlock()
-
-		err := r.executePrestart()
-		if err != nil {
-			log.Errorf("running prestart: %+v", err)
-			return
-		}
-
-		r.consoleCapture.Respawning()
-
-		ipcChannel := "gomon-" + uuid.New().String()
-		err = r.runIPCServer(ipcChannel)
-		if err != nil {
-			log.Errorf("starting ipc server: %+v", err)
-		}
-
-		if r.getChildCmd() != nil {
-			log.Warn("child process already running")
-			return
-		}
-
-		log.Infof("spawning 'go run %s'", r.Config.Entrypoint)
-
-		args := []string{"run", r.Config.Entrypoint}
-		if len(r.Config.EntrypointArgs) > 0 {
-			args = append(args, r.Config.EntrypointArgs...)
-		}
-
-		envVars := []string{fmt.Sprintf("GOMON_IPC_CHANNEL=%s", ipcChannel)}
-		envVars = append(envVars, r.envVars...)
-
-		cmd := exec.Command("go", args...)
-		cmd.Dir = r.Config.RootDirectory
-		cmd.Stdout = r.consoleCapture.Stdout()
-		cmd.Stderr = r.consoleCapture.Stderr()
-		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-		cmd.Env = envVars
-
-		r.setChildCmd(cmd)
-
-		err = cmd.Start()
-		if err != nil {
-			log.Errorf("spawning child process: %+v", err)
-			return
-		}
-
-		err = cmd.Wait()
-		if err != nil && !(err.Error() != "signal: terminated" || err.Error() != "signal: killed") {
-			log.Warnf("child process exited abnormally: %+v", err)
-		}
-		if cmd.ProcessState.ExitCode() != 0 {
-			log.Warnf("child process exited with non-zero status: %d", cmd.ProcessState.ExitCode())
-		}
-		r.setChildCmd(nil)
-		r.childCmdClosed <- true
-
-		exitStatus := cmd.ProcessState.ExitCode()
-		if exitStatus > 0 && r.closeFunc != nil {
-			r.closeFunc()
-		}
-
-		r.isRespawning.Store(false)
-	}()
-}
-
-func (r *hotReloader) executePrestart() error {
-	for _, task := range r.Config.Prestart {
-		err := r.runOOBTask(task)
-		if err != nil {
-			return fmt.Errorf("running prestart task: %w", err)
-		}
-	}
-	return nil
-}
-
-func (r *hotReloader) Respawn() {
-	r.isRespawning.Store(true)
-
-	err := r.closeChild()
-	if err != nil {
-		log.Errorf("closing child process: %+v", err)
-		return
-	}
-	r.spawnChild()
-}
-
-func (r *hotReloader) closeChild() error {
-	r.closeLock.Lock()
-	defer r.closeLock.Unlock()
-
-	cmd := r.getChildCmd()
-	if cmd == nil {
-		return nil
-	}
-
-	if cmd.Process == nil {
-		return nil
-	}
-
-	log.Info("terminating child process")
-	// calling syscall.Kill with a negative pid sends the signal to the entire process group
-	// including the child process and any of its children
-	err := syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
-	if err != nil {
-		return err
-	}
-
-	select {
-	case <-r.childCmdClosed:
-		log.Info("child process closed")
-	case <-time.After(r.killTimeout):
-		cmd = r.getChildCmd()
-		if cmd != nil {
-			log.Warn("child process did not shut down gracefully, killing it")
-			err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-			if err != nil && err.Error() != "os: process already finished" {
-				return fmt.Errorf("killing child process: %w", err)
-			}
-		}
-	}
-
-	return nil
-}
-
-func (r *hotReloader) loadEnvFile(filename string) error {
-	if _, err := os.Stat(filename); os.IsNotExist(err) {
-		log.Warnf("env file %s does not exist", filename)
-		return nil
-	}
-
-	file, err := os.Open(filename)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if strings.HasPrefix(line, "#") || len(line) == 0 {
-			continue
-		}
-		r.envVars = append(r.envVars, line)
-	}
-
-	if err := scanner.Err(); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func (r *hotReloader) getChildCmd() *exec.Cmd {
-	if cmd, ok := r.childCmd.Load().(*exec.Cmd); !ok {
-		return nil
-	} else {
-		return cmd
-	}
-}
-
-func (r *hotReloader) setChildCmd(cmd *exec.Cmd) {
-	r.childCmd.Store(cmd)
 }
