@@ -1,34 +1,35 @@
-```bash
-go intall https://github.com/jdudmesh/gomon
-```
-
 # Overview
-`gomon` is a tool to monitor and hot reload go programs. The DX for many front end frameworks like NextJS is very good. Changing a  Programs reload when file changes are detected and, for web apps, browsers are automatically reloaded. Commonly tools like `nodemon` and `Vite` are used to achieve this.
+
+`gomon` is a tool to monitor and hot reload go programs. The DX for many front end frameworks like NextJS is very good. Changing a Programs reload when file changes are detected and, for web apps, browsers are automatically reloaded. Commonly tools like `nodemon` and `Vite` are used to achieve this.
 
 The aim is to provide a similar experience to these tools for Go programs.
 
 For example usage see [this example](https://github.com/jdudmesh/gomon-example)
 
 ## Key features
-* `go run` a project and force hard restart based on file changes defined by a list of file extensions (typically `*.go`)
-* perform a soft restart (e.g. reload templates) based on a file changes defined by second list of file extensions (typically `*.html`)
-* ignore file changes in specified directories (e.g. `vendor`)
-* load environment variables from e.g. `.env` files
-* run scripts for generated files based on globs e.g. *.templ
-* Proxy http requests to the downstream project and automatically inject an HMR script
-* Fire a page reload in the browser on hard or soft restart using SSE
-* Implements a Web UI which displays and can search console logs with history
-* prestart - run a list of tasks before running the main entrypoint e.g. `go generate`
+
+- `go run` a project and force hard restart based on file changes defined by a list of file extensions (typically `*.go`)
+- perform a soft restart (e.g. reload templates) based on a file changes defined by second list of file extensions (typically `*.html`)
+- ignore file changes in specified directories (e.g. `vendor`)
+- load environment variables from e.g. `.env` files
+- run scripts for generated files based on globs e.g. \*.templ
+- Proxy http requests to the downstream project and automatically inject an HMR script
+- Fire a page reload in the browser on hard or soft restart using SSE
+- Implements a Web UI which displays and can search console logs with history
+- prestart - run a list of tasks before running the main entrypoint e.g. `go generate`
 
 # Usage
 
 ## Installation
+
 Install the tool as follows:
+
 ```bash
 go install github.com/jdudmesh/gomon@latest
 ```
 
 ## Basic Usage
+
 In your project directory run:
 
 ```bash
@@ -38,6 +39,7 @@ gomon <path to main.go>
 This will simply `go run` your project and restart on changes to `*.go` files.
 
 `gomon` supports a number of command line parameters:
+
 ```
 --conf - specify a config file (see below)
 --dir  - use an alternative root directory
@@ -45,16 +47,20 @@ This will simply `go run` your project and restart on changes to `*.go` files.
 ```
 
 ## Working Directory
+
 The working directory for `gomon` is the current directory unless:
+
 1. if a root directory is specified then that is used
 2. otherwise, if specified in the config file that is used
 3. otherwise, the current directory is used
 
 ## Config files
+
 If a config file is specified, or one is found in the working directory, then that is used. Command line flags override config file values.
 
 The config file is a YAML file as follows:
-```yaml
+
+````yaml
 
 entrypoint:
 entrypointArgs:
@@ -141,6 +147,6 @@ func main() {
 		e.Logger.Fatal(e.Start(":8080"))
 	}
 }
-```
+````
 
 At the moment on a generic reloader and Labstack Echo are supported. Please raise an issue if you would like other support added for other frameworks.
