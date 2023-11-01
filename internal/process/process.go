@@ -49,22 +49,20 @@ type ConsoleOutput interface {
 const ipcStatusDisconnected = "Disconnected"
 
 type childProcess struct {
-	rootDirectory   string
-	entrypoint      string
-	envVars         []string
-	entrypointArgs  []string
-	prestart        []string
-	isPrestarting   atomic.Bool
-	childCmd        atomic.Value
-	childLock       sync.Mutex
-	childCmdClosed  chan bool
-	childTerminated sync.WaitGroup
-	consoleOutput   ConsoleOutput
-	isRespawning    atomic.Bool
-	ipcServer       *ipc.Server
-	hmrListeners    []chan string
-	killTimeout     time.Duration // TODO: make configurable
-	closeLock       sync.Mutex
+	rootDirectory  string
+	entrypoint     string
+	envVars        []string
+	entrypointArgs []string
+	prestart       []string
+	childCmd       atomic.Value
+	childLock      sync.Mutex
+	childRunWait   sync.WaitGroup
+	isStarting     atomic.Bool
+	childCmdClosed chan bool
+	consoleOutput  ConsoleOutput
+	ipcServer      *ipc.Server
+	hmrListeners   []chan string
+	killTimeout    time.Duration // TODO: make configurable
 }
 
 type ChildProcessOption func(*childProcess) error
@@ -85,19 +83,17 @@ func WithHMRListener(listener chan string) ChildProcessOption {
 
 func New(cfg *config.Config, opts ...ChildProcessOption) (*childProcess, error) {
 	proc := &childProcess{
-		rootDirectory:   cfg.RootDirectory,
-		entrypoint:      cfg.Entrypoint,
-		envVars:         os.Environ(),
-		entrypointArgs:  cfg.EntrypointArgs,
-		prestart:        cfg.Prestart,
-		isPrestarting:   atomic.Bool{},
-		childLock:       sync.Mutex{},
-		childCmdClosed:  make(chan bool, 1),
-		childTerminated: sync.WaitGroup{},
-		isRespawning:    atomic.Bool{},
-		hmrListeners:    []chan string{},
-		killTimeout:     5 * time.Second,
-		closeLock:       sync.Mutex{},
+		rootDirectory:  cfg.RootDirectory,
+		entrypoint:     cfg.Entrypoint,
+		envVars:        os.Environ(),
+		entrypointArgs: cfg.EntrypointArgs,
+		prestart:       cfg.Prestart,
+		childLock:      sync.Mutex{},
+		childRunWait:   sync.WaitGroup{},
+		isStarting:     atomic.Bool{},
+		childCmdClosed: make(chan bool, 1),
+		hmrListeners:   []chan string{},
+		killTimeout:    5 * time.Second,
 	}
 
 	for _, opt := range opts {
@@ -122,9 +118,9 @@ func New(cfg *config.Config, opts ...ChildProcessOption) (*childProcess, error) 
 }
 
 func (r *childProcess) Start() error {
-	r.childTerminated.Add(1)
-	go r.startChild()
-	r.childTerminated.Wait()
+	r.childRunWait.Add(1)
+	r.startChild()
+	r.childRunWait.Wait()
 	return nil
 }
 
@@ -141,32 +137,39 @@ func (r *childProcess) Close() error {
 }
 
 func (r *childProcess) HardRestart(path string) error {
-	if r.isPrestarting.Load() {
+	isStarting := r.isStarting.Load()
+	if isStarting {
 		return nil
 	}
 
-	r.isRespawning.Store(true)
+	log.Infof("hard restart: %s", path)
+
+	r.childRunWait.Add(1)
 
 	err := r.closeChild()
 	if err != nil {
 		return fmt.Errorf("terminating child process: %w", err)
 	}
 
-	go r.startChild()
+	r.startChild()
 
 	return nil
 }
 
 func (r *childProcess) SoftRestart(path string) error {
-	if r.isPrestarting.Load() {
+	isStarting := r.isStarting.Load()
+	if isStarting {
 		return nil
 	}
+
+	log.Infof("soft restart: %s", path)
 
 	err := r.ipcServer.Write(gomonclient.MsgTypeReload, []byte(path))
 	if err != nil {
 		log.Errorf("ipc write: %+v", err)
 	}
-	return fmt.Errorf("soft restart: %w", err)
+
+	return nil
 }
 
 func (r *childProcess) RunOutOfBandTask(task string) error {
@@ -195,89 +198,119 @@ func (r *childProcess) RunOutOfBandTask(task string) error {
 
 func (r *childProcess) startChild() {
 	r.childLock.Lock()
-	defer func() {
-		r.isRespawning.Store(false)
-		r.setChildCmd(nil)
-		r.childCmdClosed <- true
-		r.childLock.Unlock()
+	r.isStarting.Store(true)
+	go func() {
+		defer func() {
+			r.isStarting.Store(false)
+			r.setChildCmd(nil)
+			r.childLock.Unlock()
+			r.childRunWait.Done()
+			r.childCmdClosed <- true
+		}()
+
+		r.consoleOutput.OnHardRestart()
+
+		log.Info("running prestart tasks")
+		err := r.executePrestart()
+		if err != nil {
+			log.Errorf("running prestart: %+v", err)
+			return
+		}
+
+		ipcChannel := "gomon-" + uuid.New().String()
+		err = r.startIPCServer(ipcChannel)
+		if err != nil {
+			log.Errorf("starting ipc server: %+v", err)
+			return
+		}
+
+		if r.getChildCmd() != nil {
+			log.Warn("child process already running")
+			return
+		}
+
+		log.Infof("spawning 'go run %s'", r.entrypoint)
+
+		args := []string{"run", r.entrypoint}
+		if len(r.entrypointArgs) > 0 {
+			args = append(args, r.entrypointArgs...)
+		}
+
+		envVars := []string{fmt.Sprintf("GOMON_IPC_CHANNEL=%s", ipcChannel)}
+		envVars = append(envVars, r.envVars...)
+
+		cmd := exec.Command("go", args...)
+		cmd.Dir = r.rootDirectory
+		cmd.Stdout = r.consoleOutput.Stdout()
+		cmd.Stderr = r.consoleOutput.Stderr()
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		cmd.Env = envVars
+
+		r.setChildCmd(cmd)
+
+		err = cmd.Start()
+		if err != nil {
+			log.Errorf("spawning child process: %+v", err)
+			return
+		}
+
+		r.isStarting.Store(false)
+
+		err = cmd.Wait()
+		if err != nil && !(err.Error() != "signal: terminated" || err.Error() != "signal: killed") {
+			log.Warnf("child process exited abnormally: %+v", err)
+		}
+
+		exitStatus := cmd.ProcessState.ExitCode()
+		if exitStatus > 0 {
+			log.Warnf("child process exited with non-zero status: %d", cmd.ProcessState.ExitCode())
+		}
 	}()
+}
 
-	isRespawning := r.isRespawning.Load()
+func (r *childProcess) closeChild() error {
+	cmd := r.getChildCmd()
+	if cmd == nil {
+		return nil
+	}
 
-	r.consoleOutput.OnHardRestart()
+	if cmd.Process == nil {
+		return nil
+	}
 
-	err := r.executePrestart()
+	log.Info("terminating child process")
+	// calling syscall.Kill with a negative pid sends the signal to the entire process group
+	// including the child process and any of its children
+	err := syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
 	if err != nil {
-		log.Errorf("running prestart: %+v", err)
-		defer r.childTerminated.Done()
-		return
+		return err
 	}
 
-	ipcChannel := "gomon-" + uuid.New().String()
-	err = r.startIPCServer(ipcChannel)
-	if err != nil {
-		log.Errorf("starting ipc server: %+v", err)
-		r.childTerminated.Done()
-		return
+	select {
+	case <-r.childCmdClosed:
+		log.Info("child process closed")
+	case <-time.After(r.killTimeout):
+		cmd = r.getChildCmd()
+		if cmd != nil {
+			log.Warn("child process did not shut down gracefully, killing it")
+			err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+			if err != nil && err.Error() != "os: process already finished" {
+				return fmt.Errorf("killing child process: %w", err)
+			}
+		}
 	}
 
-	if r.getChildCmd() != nil {
-		log.Warn("child process already running")
-		r.childTerminated.Done()
-		return
-	}
-
-	log.Infof("spawning 'go run %s'", r.entrypoint)
-
-	args := []string{"run", r.entrypoint}
-	if len(r.entrypointArgs) > 0 {
-		args = append(args, r.entrypointArgs...)
-	}
-
-	envVars := []string{fmt.Sprintf("GOMON_IPC_CHANNEL=%s", ipcChannel)}
-	envVars = append(envVars, r.envVars...)
-
-	cmd := exec.Command("go", args...)
-	cmd.Dir = r.rootDirectory
-	cmd.Stdout = r.consoleOutput.Stdout()
-	cmd.Stderr = r.consoleOutput.Stderr()
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Env = envVars
-
-	r.setChildCmd(cmd)
-
-	err = cmd.Start()
-	if err != nil {
-		log.Errorf("spawning child process: %+v", err)
-		r.childTerminated.Done()
-		return
-	}
-
-	err = cmd.Wait()
-	if err != nil && !(err.Error() != "signal: terminated" || err.Error() != "signal: killed") {
-		log.Warnf("child process exited abnormally: %+v", err)
-	}
-
-	exitStatus := cmd.ProcessState.ExitCode()
-	if exitStatus > 0 {
-		log.Warnf("child process exited with non-zero status: %d", cmd.ProcessState.ExitCode())
-	}
-
-	if !isRespawning {
-		r.childTerminated.Done()
-	}
+	return nil
 }
 
 func (r *childProcess) executePrestart() error {
-	r.isPrestarting.Store(true)
-	defer r.isPrestarting.Store(false)
-
 	for _, task := range r.prestart {
 		err := r.RunOutOfBandTask(task)
 		if err != nil {
 			return fmt.Errorf("running prestart task: %w", err)
 		}
 	}
+	time.Sleep(time.Second)
 	return nil
 }
 
@@ -327,44 +360,6 @@ func (r *childProcess) startIPCServer(ipcChannel string) error {
 			}
 		}
 	}()
-
-	return nil
-}
-
-func (r *childProcess) closeChild() error {
-	r.closeLock.Lock()
-	defer r.closeLock.Unlock()
-
-	cmd := r.getChildCmd()
-	if cmd == nil {
-		return nil
-	}
-
-	if cmd.Process == nil {
-		return nil
-	}
-
-	log.Info("terminating child process")
-	// calling syscall.Kill with a negative pid sends the signal to the entire process group
-	// including the child process and any of its children
-	err := syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
-	if err != nil {
-		return err
-	}
-
-	select {
-	case <-r.childCmdClosed:
-		log.Info("child process closed")
-	case <-time.After(r.killTimeout):
-		cmd = r.getChildCmd()
-		if cmd != nil {
-			log.Warn("child process did not shut down gracefully, killing it")
-			err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-			if err != nil && err.Error() != "os: process already finished" {
-				return fmt.Errorf("killing child process: %w", err)
-			}
-		}
-	}
 
 	return nil
 }

@@ -167,8 +167,8 @@ func main() {
 	go func() {
 		signal.Notify(sigint, os.Interrupt, syscall.SIGTERM)
 		for range sigint {
-			childProcess.Close()
 			log.Info("received signal, exiting")
+			childProcess.Close()
 		}
 	}()
 

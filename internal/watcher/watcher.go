@@ -137,7 +137,6 @@ func (w *filesystemWatcher) processFileChange(event fsnotify.Event) {
 
 	for _, hard := range w.Config.HardReload {
 		if match, _ := filepath.Match(hard, filepath.Base(filePath)); match {
-			log.Infof("hard restart: %s", relPath)
 			err := w.childProcess.HardRestart(relPath)
 			if err != nil {
 				log.Errorf("hard restart: %+v", err)
@@ -148,7 +147,6 @@ func (w *filesystemWatcher) processFileChange(event fsnotify.Event) {
 
 	for _, soft := range w.Config.SoftReload {
 		if match, _ := filepath.Match(soft, filepath.Base(filePath)); match {
-			log.Infof("soft restart: %s", relPath)
 			err := w.childProcess.SoftRestart(relPath)
 			if err != nil {
 				log.Errorf("soft restart: %+v", err)
