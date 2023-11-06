@@ -43,16 +43,23 @@ const gomonInjectCode = `
 const headTag = `<head>`
 
 type webProxy struct {
-	config.Config
-	eventSink  chan string
-	httpServer *http.Server
-	sseServer  *sse.Server
-	injectCode string
+	enabled           bool
+	port              int
+	downstreamHost    string
+	downstreamTimeout time.Duration
+	eventSink         chan string
+	httpServer        *http.Server
+	sseServer         *sse.Server
+	injectCode        string
 }
 
 func New(cfg *config.Config) (*webProxy, error) {
 	proxy := &webProxy{
-		Config: *cfg,
+		enabled:           cfg.Proxy.Enabled,
+		port:              cfg.Proxy.Port,
+		downstreamHost:    cfg.Proxy.Downstream.Host,
+		downstreamTimeout: time.Duration(cfg.Proxy.Downstream.Timeout) * time.Second,
+		eventSink:         make(chan string),
 	}
 
 	err := proxy.initProxy()
@@ -64,21 +71,21 @@ func New(cfg *config.Config) (*webProxy, error) {
 }
 
 func (p *webProxy) initProxy() error {
-	if !p.Proxy.Enabled && p.Proxy.Port == 0 {
+	if !p.enabled && p.port == 0 {
 		return nil
 	}
 
-	if p.Proxy.Port == 0 {
-		p.Proxy.Port = 4000
-		p.Proxy.Enabled = true
+	if p.port == 0 {
+		p.port = 4000
+		p.enabled = true
 	}
 
-	if p.Proxy.Downstream.Host == "" {
+	if p.downstreamHost == "" {
 		return errors.New("downstream host:port is required")
 	}
 
-	if p.Proxy.Downstream.Timeout == 0 {
-		p.Proxy.Downstream.Timeout = 5
+	if p.downstreamTimeout == 0 {
+		p.downstreamTimeout = 5
 	}
 
 	p.injectCode = gomonInjectCode
@@ -93,7 +100,7 @@ func (p *webProxy) initProxy() error {
 	mux.HandleFunc("/", p.handleDefault)
 
 	p.httpServer = &http.Server{
-		Addr:    fmt.Sprintf(":%d", p.Proxy.Port),
+		Addr:    fmt.Sprintf(":%d", p.port),
 		Handler: mux,
 	}
 
@@ -101,11 +108,11 @@ func (p *webProxy) initProxy() error {
 }
 
 func (p *webProxy) Start() error {
-	if !p.Proxy.Enabled {
+	if !p.enabled {
 		return nil
 	}
 
-	log.Infof("proxy server running on http://localhost:%d", p.Proxy.Port)
+	log.Infof("proxy server running on http://localhost:%d", p.port)
 	go func() {
 		err := p.httpServer.ListenAndServe()
 		log.Infof("shutting down proxy server: %v", err)
@@ -147,8 +154,8 @@ func (p *webProxy) handleReload(res http.ResponseWriter, req *http.Request) {
 }
 
 func (p *webProxy) handleDefault(res http.ResponseWriter, req *http.Request) {
-	duration := time.Duration(p.Proxy.Downstream.Timeout) * time.Second // TODO: calculate at startup
-	p.proxyRequest(res, req, p.Proxy.Downstream.Host, duration, p.injectCode)
+	duration := time.Duration(p.downstreamTimeout) * time.Second // TODO: calculate at startup
+	p.proxyRequest(res, req, p.downstreamHost, duration, p.injectCode)
 }
 
 func (p *webProxy) proxyRequest(res http.ResponseWriter, req *http.Request, host string, timeout time.Duration, injectCode string) {
