@@ -125,8 +125,14 @@ func (r *childProcess) Start() error {
 }
 
 func (r *childProcess) Close() error {
-	log.Info("closing IPC server")
-	r.ipcServer.Close()
+	if r.ipcServer != nil {
+		err := r.ipcServer.Write(gomonclient.MsgTypeShutdown, nil)
+		if err != nil {
+			log.Errorf("ipc write: %+v", err)
+		}
+		log.Info("closing IPC server")
+		r.ipcServer.Close()
+	}
 
 	err := r.closeChild()
 	if err != nil {
