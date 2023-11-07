@@ -18,6 +18,7 @@ package process
 
 import (
 	"bufio"
+	"bytes"
 	"fmt"
 	"io"
 	"os"
@@ -181,11 +182,14 @@ func (r *childProcess) SoftRestart(path string) error {
 func (r *childProcess) RunOutOfBandTask(task string) error {
 	log.Infof("running task: %s", task)
 
+	stdoutBuf := &bytes.Buffer{}
+	stderrBuf := &bytes.Buffer{}
+
 	args := strings.Split(task, " ")
 	cmd := exec.Command(args[0], args[1:]...)
 	cmd.Dir = r.rootDirectory
-	cmd.Stdout = r.consoleOutput.Stdout()
-	cmd.Stderr = r.consoleOutput.Stderr()
+	cmd.Stdout = stdoutBuf
+	cmd.Stderr = stderrBuf
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Env = r.envVars
 
@@ -196,8 +200,13 @@ func (r *childProcess) RunOutOfBandTask(task string) error {
 
 	err = cmd.Wait()
 	if err != nil {
-		return fmt.Errorf("waiting for task: %w", err)
+		_, _ = stdoutBuf.WriteTo(os.Stdout)
+		_, _ = stderrBuf.WriteTo(os.Stderr)
+		return fmt.Errorf("oob task failed: %w", err)
 	}
+
+	_, _ = stdoutBuf.WriteTo(r.consoleOutput.Stdout())
+	_, _ = stderrBuf.WriteTo(r.consoleOutput.Stderr())
 
 	return nil
 }
