@@ -200,8 +200,9 @@ func (r *childProcess) RunOutOfBandTask(task string) error {
 
 	err = cmd.Wait()
 	if err != nil {
-		_, _ = stdoutBuf.WriteTo(os.Stdout)
-		_, _ = stderrBuf.WriteTo(os.Stderr)
+		log.Error("oob task failed")
+		log.Warnf("stdout:\n%s", stdoutBuf.String())
+		log.Warnf("stderr:\n%s", stderrBuf.String())
 		return fmt.Errorf("oob task failed: %w", err)
 	}
 

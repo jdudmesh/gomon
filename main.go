@@ -17,6 +17,7 @@ package main
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import (
+	"bytes"
 	"flag"
 	"fmt"
 	"os"
@@ -37,7 +38,45 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+const (
+	red    = 31
+	yellow = 33
+	blue   = 36
+	gray   = 37
+)
+
+type logFormatter struct {
+}
+
+func (l *logFormatter) Format(entry *log.Entry) ([]byte, error) {
+	var levelColor int
+	switch entry.Level {
+	case log.DebugLevel, log.TraceLevel:
+		levelColor = gray
+	case log.WarnLevel:
+		levelColor = yellow
+	case log.ErrorLevel, log.FatalLevel, log.PanicLevel:
+		levelColor = red
+	case log.InfoLevel:
+		levelColor = blue
+	default:
+		levelColor = blue
+	}
+
+	entry.Message = strings.TrimSuffix(entry.Message, "\n")
+
+	b := &bytes.Buffer{}
+	fmt.Fprintf(b, "\x1b[%dm%s", levelColor, entry.Message)
+
+	b.WriteByte('\n')
+	return b.Bytes(), nil
+
+}
+
 func main() {
+	formatter := new(logFormatter)
+	log.SetFormatter(formatter)
+
 	cfg, err := loadConfig()
 	if err != nil {
 		log.Fatalf("loading config: %v", err)
