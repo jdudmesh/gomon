@@ -58,6 +58,7 @@ type childProcess struct {
 	childCmd       atomic.Value
 	childLock      sync.Mutex
 	childRunWait   sync.WaitGroup
+	isStarted      atomic.Bool
 	isStarting     atomic.Bool
 	childCmdClosed chan bool
 	consoleOutput  ConsoleOutput
@@ -91,6 +92,7 @@ func New(cfg *config.Config, opts ...ChildProcessOption) (*childProcess, error) 
 		prestart:       cfg.Prestart,
 		childLock:      sync.Mutex{},
 		childRunWait:   sync.WaitGroup{},
+		isStarted:      atomic.Bool{},
 		isStarting:     atomic.Bool{},
 		childCmdClosed: make(chan bool, 1),
 		hmrListeners:   []chan string{},
@@ -215,6 +217,7 @@ func (r *childProcess) RunOutOfBandTask(task string) error {
 func (r *childProcess) startChild() {
 	r.childLock.Lock()
 	r.isStarting.Store(true)
+	r.isStarted.Store(false)
 	go func() {
 		defer func() {
 			r.isStarting.Store(false)
@@ -353,6 +356,7 @@ func (r *childProcess) startIPCServer(ipcChannel string) error {
 
 			switch msg.MsgType {
 			case gomonclient.MsgTypeReloaded:
+				log.Info("Received reload message from downstream process")
 				r.notifyEventListeners(string(msg.Data))
 
 			case gomonclient.MsgTypePing:
@@ -362,6 +366,8 @@ func (r *childProcess) startIPCServer(ipcChannel string) error {
 				}
 
 			case gomonclient.MsgTypeStartup:
+				log.Info("Received startup message from downstream process")
+				r.isStarted.Store(true)
 				r.notifyEventListeners("#gomon:startup#")
 
 			case gomonclient.MsgTypeInternal:

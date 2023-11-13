@@ -17,11 +17,14 @@ package proxy
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httputil"
+	"net/url"
 	"strings"
 	"time"
 
@@ -84,6 +87,10 @@ func (p *webProxy) initProxy() error {
 		return errors.New("downstream host:port is required")
 	}
 
+	if !strings.HasPrefix(p.downstreamHost, "http") {
+		p.downstreamHost = "http://" + p.downstreamHost
+	}
+
 	if p.downstreamTimeout == 0 {
 		p.downstreamTimeout = 5
 	}
@@ -97,7 +104,16 @@ func (p *webProxy) initProxy() error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/__gomon__/reload", p.handleReload)
 	mux.HandleFunc("/__gomon__/events", p.sseServer.ServeHTTP)
-	mux.HandleFunc("/", p.handleDefault)
+
+	downstreamURL, err := url.Parse(p.downstreamHost)
+	if err != nil {
+		return fmt.Errorf("downstream host: %v", err)
+	}
+
+	proxy := httputil.NewSingleHostReverseProxy(downstreamURL)
+	proxy.ModifyResponse = p.proxyRequest
+
+	mux.HandleFunc("/", proxy.ServeHTTP)
 
 	p.httpServer = &http.Server{
 		Addr:    fmt.Sprintf(":%d", p.port),
@@ -153,79 +169,31 @@ func (p *webProxy) handleReload(res http.ResponseWriter, req *http.Request) {
 	res.WriteHeader(http.StatusOK)
 }
 
-func (p *webProxy) handleDefault(res http.ResponseWriter, req *http.Request) {
-	duration := time.Duration(p.downstreamTimeout) * time.Second // TODO: calculate at startup
-	p.proxyRequest(res, req, p.downstreamHost, duration, p.injectCode)
-}
-
-func (p *webProxy) proxyRequest(res http.ResponseWriter, req *http.Request, host string, timeout time.Duration, injectCode string) {
-	ctx, closeFn := context.WithTimeout(req.Context(), timeout)
-	defer closeFn()
-
-	nextURL := req.URL
-	nextURL.Scheme = "http"
-	nextURL.Host = host
-	nextURL.Path = req.URL.Path
-	nextURL.RawQuery = req.URL.RawQuery
-
-	nextReq, err := http.NewRequestWithContext(ctx, req.Method, nextURL.String(), req.Body)
-	if err != nil {
-		log.Errorf("creating request: %v", err)
-		http.Error(res, err.Error(), http.StatusInternalServerError)
-		return
+func (p *webProxy) proxyRequest(res *http.Response) error {
+	isHtml := strings.HasPrefix(res.Header.Get("Content-Type"), "text/html")
+	if !isHtml {
+		return nil
 	}
 
-	for k, v := range req.Header {
-		nextReq.Header.Add(k, strings.Join(v, " "))
-	}
-
-	nextRes, err := http.DefaultClient.Do(nextReq)
-	if err != nil {
-		log.Errorf("proxying request: %v", err)
-		http.Error(res, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	defer nextRes.Body.Close()
-
-	nextRes.Header.Del("Content-Length")
-	nextRes.Header.Del("Cache-Control")
-	for k, v := range nextRes.Header {
-		res.Header()[k] = v
-	}
-	res.Header()["Cache-Control"] = []string{"no-cache, no-store, no-transform, must-revalidate"}
-
-	res.WriteHeader(nextRes.StatusCode)
-
-	// TODO: assuming that we can fit the whole response body into memory, probably not a good idea, fix it later
-	buffer, err := io.ReadAll(nextRes.Body)
+	outBuf := bytes.Buffer{}
+	inBuf, err := io.ReadAll(res.Body)
 	if err != nil {
 		log.Errorf("reading request body: %v", err)
-		http.Error(res, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	isHtml := strings.HasPrefix(nextRes.Header.Get("Content-Type"), "text/html")
-	if !isHtml || len(injectCode) == 0 {
-		_, err = res.Write(buffer)
-		if err != nil {
-			log.Errorf("writing response: %v", err)
-			http.Error(res, err.Error(), http.StatusInternalServerError)
-		}
-		return
+		return err
 	}
 
 	ix := 0
 	match := false
 	for {
-		if ix >= len(buffer) {
+		if ix >= len(inBuf) {
 			break
 		}
 
-		if buffer[ix] == '<' {
+		if inBuf[ix] == '<' {
 			// check if we have a match
 			match = true
 			for jx := 0; jx < len(headTag); jx++ {
-				if ix+jx >= len(buffer) || buffer[ix+jx] != headTag[jx] {
+				if ix+jx >= len(inBuf) || inBuf[ix+jx] != headTag[jx] {
 					match = false
 					break
 				}
@@ -234,23 +202,20 @@ func (p *webProxy) proxyRequest(res http.ResponseWriter, req *http.Request, host
 			if match {
 				cutPos := ix + len(headTag)
 				// we have a match, inject the code
-				_, err = res.Write(buffer[:cutPos])
+				_, err = outBuf.Write(inBuf[:cutPos])
 				if err != nil {
 					log.Errorf("writing response: %v", err)
-					http.Error(res, err.Error(), http.StatusInternalServerError)
-					return
+					return err
 				}
-				_, err = res.Write([]byte(injectCode))
+				_, err = outBuf.Write([]byte(p.injectCode))
 				if err != nil {
 					log.Errorf("writing response: %v", err)
-					http.Error(res, err.Error(), http.StatusInternalServerError)
-					return
+					return err
 				}
-				_, err = res.Write(buffer[cutPos:])
+				_, err = outBuf.Write(inBuf[cutPos:])
 				if err != nil {
 					log.Errorf("writing response: %v", err)
-					http.Error(res, err.Error(), http.StatusInternalServerError)
-					return
+					return err
 				}
 				break
 			}
@@ -260,11 +225,15 @@ func (p *webProxy) proxyRequest(res http.ResponseWriter, req *http.Request, host
 	}
 
 	if !match {
-		_, err = res.Write(buffer)
+		_, err = outBuf.Write(inBuf)
 		if err != nil {
 			log.Errorf("writing response: %v", err)
-			http.Error(res, err.Error(), http.StatusInternalServerError)
-			return
+			return err
 		}
 	}
+
+	res.Body = io.NopCloser(&outBuf)
+	res.Header["Content-Length"] = []string{fmt.Sprint(outBuf.Len())}
+
+	return nil
 }
