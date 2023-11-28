@@ -41,30 +41,52 @@ const (
 	ForceSoftRestart = "__soft_reload"
 )
 
+type NotificationType int
+
+const (
+	NotificationTypeStartup NotificationType = iota
+	NotificationTypeHardRestart
+	NotificationTypeSoftRestart
+	NotificationTypeShutdown
+)
+
+type Notification struct {
+	Type    NotificationType
+	Message string
+}
+
+type NotificationSink interface {
+	Notify(n Notification)
+}
+
 type ConsoleOutput interface {
-	OnHardRestart()
+	NotificationSink
 	Stdout() io.Writer
 	Stderr() io.Writer
 }
 
 const ipcStatusDisconnected = "Disconnected"
+const initialBackoff = 50 * time.Millisecond
+const maxBackoff = 5 * time.Second
 
 type childProcess struct {
-	rootDirectory  string
-	entrypoint     string
-	envVars        []string
-	entrypointArgs []string
-	prestart       []string
-	childCmd       atomic.Value
-	childLock      sync.Mutex
-	childRunWait   sync.WaitGroup
-	isStarted      atomic.Bool
-	isStarting     atomic.Bool
-	childCmdClosed chan bool
-	consoleOutput  ConsoleOutput
-	ipcServer      *ipc.Server
-	hmrListeners   []chan string
-	killTimeout    time.Duration // TODO: make configurable
+	rootDirectory       string
+	entrypoint          string
+	envVars             []string
+	entrypointArgs      []string
+	prestart            []string
+	childCmd            atomic.Value
+	childInnerRunWait   sync.WaitGroup
+	childOuterRunWait   sync.WaitGroup
+	isStarting          atomic.Bool
+	isStarted           atomic.Bool
+	isExpectingShutdown atomic.Bool
+	backoff             time.Duration
+	childCmdClosed      chan bool
+	consoleOutput       ConsoleOutput
+	ipcServer           *ipc.Server
+	notificationSinks   []NotificationSink
+	killTimeout         time.Duration // TODO: make configurable
 }
 
 type ChildProcessOption func(*childProcess) error
@@ -72,31 +94,33 @@ type ChildProcessOption func(*childProcess) error
 func WithConsoleOutput(c ConsoleOutput) ChildProcessOption {
 	return func(r *childProcess) error {
 		r.consoleOutput = c
+		r.notificationSinks = append(r.notificationSinks, c)
 		return nil
 	}
 }
 
-func WithHMRListener(listener chan string) ChildProcessOption {
+func WithHMRListener(sink NotificationSink) ChildProcessOption {
 	return func(r *childProcess) error {
-		r.hmrListeners = append(r.hmrListeners, listener)
+		r.notificationSinks = append(r.notificationSinks, sink)
 		return nil
 	}
 }
 
 func New(cfg *config.Config, opts ...ChildProcessOption) (*childProcess, error) {
 	proc := &childProcess{
-		rootDirectory:  cfg.RootDirectory,
-		entrypoint:     cfg.Entrypoint,
-		envVars:        os.Environ(),
-		entrypointArgs: cfg.EntrypointArgs,
-		prestart:       cfg.Prestart,
-		childLock:      sync.Mutex{},
-		childRunWait:   sync.WaitGroup{},
-		isStarted:      atomic.Bool{},
-		isStarting:     atomic.Bool{},
-		childCmdClosed: make(chan bool, 1),
-		hmrListeners:   []chan string{},
-		killTimeout:    5 * time.Second,
+		rootDirectory:       cfg.RootDirectory,
+		entrypoint:          cfg.Entrypoint,
+		envVars:             os.Environ(),
+		entrypointArgs:      cfg.EntrypointArgs,
+		prestart:            cfg.Prestart,
+		childInnerRunWait:   sync.WaitGroup{},
+		childOuterRunWait:   sync.WaitGroup{},
+		isStarting:          atomic.Bool{},
+		isStarted:           atomic.Bool{},
+		isExpectingShutdown: atomic.Bool{},
+		childCmdClosed:      make(chan bool, 1),
+		notificationSinks:   []NotificationSink{},
+		killTimeout:         5 * time.Second,
 	}
 
 	for _, opt := range opts {
@@ -121,9 +145,11 @@ func New(cfg *config.Config, opts ...ChildProcessOption) (*childProcess, error) 
 }
 
 func (r *childProcess) Start() error {
-	r.childRunWait.Add(1)
+	r.backoff = initialBackoff
+	r.childOuterRunWait.Add(1)
 	r.startChild()
-	r.childRunWait.Wait()
+	r.childOuterRunWait.Wait()
+	r.childCmdClosed <- true
 	return nil
 }
 
@@ -153,13 +179,14 @@ func (r *childProcess) HardRestart(path string) error {
 
 	log.Infof("hard restart: %s", path)
 
-	r.childRunWait.Add(1)
+	r.childOuterRunWait.Add(1)
 
 	err := r.closeChild()
 	if err != nil {
 		return fmt.Errorf("terminating child process: %w", err)
 	}
 
+	r.backoff = initialBackoff
 	r.startChild()
 
 	return nil
@@ -215,19 +242,16 @@ func (r *childProcess) RunOutOfBandTask(task string) error {
 }
 
 func (r *childProcess) startChild() {
-	r.childLock.Lock()
+	r.isExpectingShutdown.Store(false)
 	r.isStarting.Store(true)
 	r.isStarted.Store(false)
 	go func() {
-		defer func() {
-			r.isStarting.Store(false)
-			r.setChildCmd(nil)
-			r.childLock.Unlock()
-			r.childRunWait.Done()
-			r.childCmdClosed <- true
-		}()
+		r.childInnerRunWait.Wait()
 
-		r.consoleOutput.OnHardRestart()
+		r.childInnerRunWait.Add(1)
+		defer r.childInnerRunWait.Done()
+
+		r.notifyEventSinks(Notification{Type: NotificationTypeStartup})
 
 		log.Info("running prestart tasks")
 		err := r.executePrestart()
@@ -284,6 +308,23 @@ func (r *childProcess) startChild() {
 		if exitStatus > 0 {
 			log.Warnf("child process exited with non-zero status: %d", cmd.ProcessState.ExitCode())
 		}
+
+		r.notifyEventSinks(Notification{Type: NotificationTypeShutdown})
+		r.setChildCmd(nil)
+
+		if !r.isExpectingShutdown.Load() {
+			log.Warn("child process exited unexpectedly, restarting")
+			if r.backoff > maxBackoff {
+				log.Warn("child process restarted too many times, max backoff reached")
+				r.backoff = maxBackoff
+			}
+			time.Sleep(r.backoff)
+			r.startChild()
+			r.backoff *= 2
+		} else {
+			r.childOuterRunWait.Done()
+		}
+
 	}()
 }
 
@@ -298,6 +339,7 @@ func (r *childProcess) closeChild() error {
 	}
 
 	log.Info("terminating child process")
+	r.isExpectingShutdown.Store(true)
 	// calling syscall.Kill with a negative pid sends the signal to the entire process group
 	// including the child process and any of its children
 	err := syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
@@ -333,9 +375,9 @@ func (r *childProcess) executePrestart() error {
 	return nil
 }
 
-func (r *childProcess) notifyEventListeners(msg string) {
-	for _, listener := range r.hmrListeners {
-		listener <- msg
+func (r *childProcess) notifyEventSinks(n Notification) {
+	for _, listener := range r.notificationSinks {
+		listener.Notify(n)
 	}
 }
 
@@ -357,7 +399,7 @@ func (r *childProcess) startIPCServer(ipcChannel string) error {
 			switch msg.MsgType {
 			case gomonclient.MsgTypeReloaded:
 				log.Info("Received reload message from downstream process")
-				r.notifyEventListeners(string(msg.Data))
+				r.notifyEventSinks(Notification{Type: NotificationTypeSoftRestart, Message: string(msg.Data)})
 
 			case gomonclient.MsgTypePing:
 				err := r.ipcServer.Write(gomonclient.MsgTypePong, nil)
@@ -368,7 +410,7 @@ func (r *childProcess) startIPCServer(ipcChannel string) error {
 			case gomonclient.MsgTypeStartup:
 				log.Info("Received startup message from downstream process")
 				r.isStarted.Store(true)
-				r.notifyEventListeners("#gomon:startup#")
+				r.notifyEventSinks(Notification{Type: NotificationTypeHardRestart})
 
 			case gomonclient.MsgTypeInternal:
 				log.Debugf("Internal message received: %+v", msg)

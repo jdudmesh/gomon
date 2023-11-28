@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/jdudmesh/gomon/internal/config"
+	"github.com/jdudmesh/gomon/internal/process"
 	"github.com/r3labs/sse/v2"
 	log "github.com/sirupsen/logrus"
 )
@@ -50,7 +51,7 @@ type webProxy struct {
 	port              int
 	downstreamHost    string
 	downstreamTimeout time.Duration
-	eventSink         chan string
+	eventSink         chan process.Notification
 	httpServer        *http.Server
 	sseServer         *sse.Server
 	injectCode        string
@@ -62,7 +63,7 @@ func New(cfg *config.Config) (*webProxy, error) {
 		port:              cfg.Proxy.Port,
 		downstreamHost:    cfg.Proxy.Downstream.Host,
 		downstreamTimeout: time.Duration(cfg.Proxy.Downstream.Timeout) * time.Second,
-		eventSink:         make(chan string),
+		eventSink:         make(chan process.Notification),
 	}
 
 	err := proxy.initProxy()
@@ -136,10 +137,12 @@ func (p *webProxy) Start() error {
 
 	go func() {
 		for msg := range p.eventSink {
-			log.Infof("notifying browser: %s", msg)
-			p.sseServer.Publish("hmr", &sse.Event{
-				Data: []byte(msg),
-			})
+			if msg.Type == process.NotificationTypeHardRestart || msg.Type == process.NotificationTypeSoftRestart {
+				log.Infof("notifying browser: %s", msg.Message)
+				p.sseServer.Publish("hmr", &sse.Event{
+					Data: []byte(msg.Message),
+				})
+			}
 		}
 	}()
 
@@ -160,8 +163,8 @@ func (p *webProxy) Close() error {
 	return nil
 }
 
-func (p *webProxy) EventSink() chan string {
-	return p.eventSink
+func (p *webProxy) Notify(n process.Notification) {
+	p.eventSink <- n
 }
 
 func (p *webProxy) handleReload(res http.ResponseWriter, req *http.Request) {

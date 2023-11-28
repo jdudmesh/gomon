@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/jdudmesh/gomon/internal/config"
+	"github.com/jdudmesh/gomon/internal/process"
 	"github.com/jmoiron/sqlx"
 	_ "github.com/mattn/go-sqlite3"
 	log "github.com/sirupsen/logrus"
@@ -166,8 +167,11 @@ func (s *streams) write(logType, logData string) error {
 	return nil
 }
 
-func (s *streams) OnHardRestart() {
+func (s *streams) Notify(n process.Notification) {
 	if s == nil {
+		return
+	}
+	if n.Type != process.NotificationTypeStartup {
 		return
 	}
 

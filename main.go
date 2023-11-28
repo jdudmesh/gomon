@@ -149,7 +149,7 @@ func main() {
 	// init the child process
 	childProcess, err := process.New(cfg,
 		process.WithConsoleOutput(console),
-		process.WithHMRListener(proxy.EventSink()))
+		process.WithHMRListener(proxy))
 	if err != nil {
 		log.Fatalf("creating child process: %v", err)
 	}
