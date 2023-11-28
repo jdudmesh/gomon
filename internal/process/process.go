@@ -60,7 +60,6 @@ type NotificationSink interface {
 }
 
 type ConsoleOutput interface {
-	NotificationSink
 	Stdout() io.Writer
 	Stderr() io.Writer
 }
@@ -94,12 +93,11 @@ type ChildProcessOption func(*childProcess) error
 func WithConsoleOutput(c ConsoleOutput) ChildProcessOption {
 	return func(r *childProcess) error {
 		r.consoleOutput = c
-		r.notificationSinks = append(r.notificationSinks, c)
 		return nil
 	}
 }
 
-func WithHMRListener(sink NotificationSink) ChildProcessOption {
+func WithEventSink(sink NotificationSink) ChildProcessOption {
 	return func(r *childProcess) error {
 		r.notificationSinks = append(r.notificationSinks, sink)
 		return nil

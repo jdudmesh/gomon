@@ -26,7 +26,6 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
-	"time"
 
 	"github.com/jdudmesh/gomon/internal/config"
 	"github.com/jdudmesh/gomon/internal/console"
@@ -86,9 +85,6 @@ func main() {
 		log.Fatalf("entrypoint is required")
 	}
 
-	hardRestart := make(chan bool)
-	defer close(hardRestart)
-
 	err = os.Chdir(cfg.RootDirectory)
 	if err != nil {
 		log.Fatalf("Cannot set working directory: %v", err)
@@ -143,13 +139,11 @@ func main() {
 		log.Fatalf("starting console: %v", err)
 	}
 
-	// TODO - this is a hack to give the child process time to close down and all console output to be flushed
-	time.Sleep(1 * time.Second)
-
 	// init the child process
 	childProcess, err := process.New(cfg,
 		process.WithConsoleOutput(console),
-		process.WithHMRListener(proxy))
+		process.WithEventSink(console),
+		process.WithEventSink(proxy))
 	if err != nil {
 		log.Fatalf("creating child process: %v", err)
 	}
@@ -164,17 +158,17 @@ func main() {
 
 	// init the web UI
 	if cfg.UI.Enabled {
-		server, err := webui.New(cfg, childProcess, db)
+		ui, err := webui.New(cfg, childProcess, db)
 		if err != nil {
 			log.Fatalf("creating web UI: %v", err)
 		}
 		defer func() {
-			console.RemoveEventSink(server.EventSink())
-			server.Close()
+			console.RemoveEventSink(ui.EventSink())
+			ui.Close()
 		}()
 
-		console.AddEventSink(server.EventSink())
-		err = server.Start()
+		console.AddEventSink(ui.EventSink())
+		err = ui.Start()
 		if err != nil {
 			log.Fatalf("starting web UI: %v", err)
 		}
@@ -190,24 +184,20 @@ func main() {
 		log.Fatalf("running monitor: %v", err)
 	}
 
-	// listen for restart events from other components e.g. the web UI
-	go func() {
-		for range hardRestart {
-			err := childProcess.HardRestart(process.ForceHardRestart)
-			if err != nil {
-				log.Errorf("hard restart: %v", err)
-			}
-		}
-	}()
-
 	// listen for quit signal
 	sigint := make(chan os.Signal, 1)
 	defer close(sigint)
 	go func() {
-		signal.Notify(sigint, os.Interrupt, syscall.SIGTERM)
-		for range sigint {
-			log.Info("received signal, exiting")
-			childProcess.Close()
+		signal.Notify(sigint, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+		for s := range sigint {
+			switch s {
+			case syscall.SIGHUP:
+				log.Info("received signal, restarting")
+				_ = childProcess.HardRestart("SIGHUP")
+			case os.Interrupt, syscall.SIGTERM:
+				log.Info("received signal, exiting")
+				childProcess.Close()
+			}
 		}
 	}()
 
