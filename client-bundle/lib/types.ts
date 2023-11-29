@@ -10,9 +10,8 @@ export type RequestConfigFn = (config: RequestConfig) => Promise<void> | void
 export type PostRequestFn = (res: Response) => Promise<boolean> | boolean
 
 export type ActorContext = {
-  selector: string
-  sourceElement: HTMLElement
-  targetElement: HTMLElement | null
+  sourceSelector: string
+  targetSelector: string | null
   triggerEvent: string | null
   trigger: TriggerHandlerFn
   actor: ActorHandlerFn | null
@@ -52,7 +51,7 @@ export interface Swapper {
 export type SwappableTarget = Target & Swapper & Retrigger
 
 export interface Target {
-  target: (selector: Selector) => Swapper & Retrigger
+  target: (selector: string) => Swapper & Retrigger
   before: (fn: RequestConfigFn) => SwappableTarget
   after: (fn: PostRequestFn) => SwappableTarget
 }
@@ -91,8 +90,6 @@ export type SSEEventSource = {
 export type TriggerHandlerFn = (ev: Event) => Promise<void>;
 export type ActorHandlerFn = (ev: Event | null) => Promise<void>;
 export type ResponseHandlerFn = (res: Response) => Promise<void>;
-export type SelectorFn = (ctx: ActorContext) => HTMLElement;
-export type Selector = string | SelectorFn;
 export type EventHandler = (ev: Event) => void;
 
 export type PathFn = (ctx: ActorContext) => string;

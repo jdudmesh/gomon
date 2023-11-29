@@ -235,7 +235,7 @@ func EventList(events [][]*console.LogEvent) templ.Component {
 			if err != nil {
 				return err
 			}
-			_, err = templBuffer.WriteString(templ.EscapeString("run-" + strconv.Itoa(run[0].ID)))
+			_, err = templBuffer.WriteString(templ.EscapeString("run-" + strconv.Itoa(run[0].RunID)))
 			if err != nil {
 				return err
 			}

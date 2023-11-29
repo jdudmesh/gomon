@@ -1,7 +1,7 @@
 // import { watch, watchEffect } from "@vue-reactivity/watch";
 import { watch } from "@vue-reactivity/watch";
 import { reactive, type UnwrapNestedRefs } from "@vue/reactivity";
-import type { ActorRegistry, StateRegistry, BindingEntry, SSEEventSource, EventHandler, KiloDef, SwapType, Path, Selector, RequestConfig, RequestConfigFn, PostRequestFn, ActorContext, StateContext, Base, SSE, Swapper, Target, Actor, Trigger, State, Model, RetriggerableActor, Retrigger, SwappableTarget } from "./types";
+import type { ActorRegistry, StateRegistry, BindingEntry, SSEEventSource, EventHandler, KiloDef, SwapType, Path, RequestConfig, RequestConfigFn, PostRequestFn, ActorContext, StateContext, Base, SSE, Swapper, Target, Actor, Trigger, State, Model, RetriggerableActor, Retrigger, SwappableTarget } from "./types";
 
 let baseUrl = "";
 
@@ -25,8 +25,9 @@ watch(
       if (prev.includes(ctx)) {
         continue;
       }
-      if (ctx.sourceElement) {
-        ctx.sourceElement.dispatchEvent(new CustomEvent("kilo:load"));
+      const src = document.querySelector(ctx.sourceSelector) as HTMLElement;
+      if (src) {
+        src.dispatchEvent(new CustomEvent("kilo:load"));
       }
     }
   }
@@ -65,9 +66,11 @@ document.addEventListener("readystatechange", (ev: Event) => {
     });
 
     for (const ctx of actorRegistry.contexts) {
-      if (ctx.sourceElement) {
-        ctx.sourceElement.dispatchEvent(new CustomEvent("kilo:load"));
+      const src = document.querySelector(ctx.sourceSelector) as HTMLElement;
+      if (!src) {
+        continue;
       }
+      src.dispatchEvent(new CustomEvent("kilo:load"));
     }
     for(const src of actorRegistry.sseSources) {
       if(!src.handler) {
@@ -94,9 +97,8 @@ function defaultSSEEventHandler(src: SSEEventSource) : EventHandler {
         throw new Error("Target element not found");
       }
       _swap({
-        selector: msg["x-kilo-target"],
-        sourceElement: target,
-        targetElement: target,
+        sourceSelector: msg["x-kilo-target"],
+        targetSelector: msg["x-kilo-target"],
         triggerEvent: null,
         trigger: async () => {},
         actor: null,
@@ -112,12 +114,16 @@ function defaultSSEEventHandler(src: SSEEventSource) : EventHandler {
 }
 
 async function _swap(ctx: ActorContext, swapExpr: string, markup: string) {
-  let target = ctx.targetElement;
-  if (!target) {
-    if (!ctx.sourceElement) {
-      throw new Error("Element is not defined");
+  const src = document.querySelector(ctx.sourceSelector) as HTMLElement;
+  if (!src) {
+    throw new Error("source element not found");
+  }
+  let target = src;
+  if (ctx.targetSelector) {
+    target = document.querySelector(ctx.targetSelector) as HTMLElement;
+    if (!target) {
+      throw new Error("target element not found");
     }
-    target = ctx.sourceElement;
   }
   const f = swapExpr.split(" ");
   const swapType = f[0] as SwapType;
@@ -126,7 +132,6 @@ async function _swap(ctx: ActorContext, swapExpr: string, markup: string) {
   const range = document.createRange();
   range.selectNode(target);
   const documentFragment = range.createContextualFragment(markup);
-  const newChild = documentFragment.firstChild as HTMLElement;
   switch (swapType) {
     case "innerHTML":
       while (target.firstChild) {
@@ -161,7 +166,13 @@ async function _swap(ctx: ActorContext, swapExpr: string, markup: string) {
       case "scroll":
         switch(scrollTarget) {
           case "view":
-            newChild.scrollIntoView();
+            (documentFragment.firstChild as HTMLElement)?.scrollIntoView();
+            break;
+          case "lastchild":
+            (target.lastChild as HTMLElement)?.scrollIntoView({block: "end", behavior: "instant"});
+            break;
+          case "nextsibling":
+            (target.nextSibling as HTMLElement)?.scrollIntoView({block: "end", behavior: "instant"});
             break;
         }
         break;
@@ -183,6 +194,11 @@ function extractFormData(form: HTMLFormElement, config : RequestConfig) {
 }
 
 async function _doRequest(ctx: ActorContext, url: Path, method: string) {
+  const src = document.querySelector(ctx.sourceSelector) as HTMLElement;
+  if (!src) {
+    throw new Error("source element not found");
+  }
+
   const requestUrl = typeof url === "string" ? url : url(ctx);
   const params = new FormData();
   const config : RequestConfig = {
@@ -192,9 +208,8 @@ async function _doRequest(ctx: ActorContext, url: Path, method: string) {
     method: method,
   }
 
-  if(ctx.sourceElement.tagName === "FORM") {
-    const form = ctx.sourceElement as HTMLFormElement;
-    extractFormData(form, config);
+  if(src.tagName === "FORM") {
+    extractFormData(src as HTMLFormElement, config);
   }
 
   if(ctx.beforeActor) {
@@ -234,12 +249,8 @@ function _swapper(ctx: ActorContext): Swapper & Retrigger {
 
 function _target(ctx: ActorContext): SwappableTarget {
   return {
-    target: (selector: Selector) => {
-      if (typeof selector === "string") {
-        ctx.targetElement = document.querySelector(selector) as HTMLElement;
-      } else {
-        ctx.targetElement = selector(ctx);
-      }
+    target: (selector: string) => {
+      ctx.targetSelector = selector;
       return _swapper(ctx)
     },
     before: (fn: RequestConfigFn): SwappableTarget => {
@@ -267,11 +278,12 @@ function _retrigger(ctx: ActorContext): Retrigger {
 }
 
 function _actor(ctx: ActorContext): RetriggerableActor {
-  if (!ctx.sourceElement) {
-    throw new Error("source element is not defined");
+  const src = document.querySelector(ctx.sourceSelector) as HTMLElement;
+  if (!src) {
+    throw new Error("source element not found");
   }
   if (!ctx.triggerEvent) {
-    switch (ctx.sourceElement.tagName) {
+    switch (src.tagName) {
       case "BUTTON":
         ctx.triggerEvent = "click";
         break;
@@ -283,7 +295,7 @@ function _actor(ctx: ActorContext): RetriggerableActor {
         break;
     }
   }
-  ctx.sourceElement.addEventListener(ctx.triggerEvent, ctx.trigger);
+  src.addEventListener(ctx.triggerEvent, ctx.trigger);
   return {
     get: (url: Path) => {
       ctx.actor = async (ev: Event | null) => {
@@ -312,9 +324,6 @@ function _actor(ctx: ActorContext): RetriggerableActor {
 function _trigger(ctx: ActorContext): Trigger {
   return {
     on: (event: string) => {
-      if (!ctx.sourceElement) {
-        throw new Error("Element is not defined");
-      }
       ctx.triggerEvent = event;
       return _actor(ctx)
     },
@@ -457,15 +466,14 @@ export function actor(selector: string): Trigger & Actor {
   }
 
   const ctx: ActorContext = {
-    selector: selector,
-    sourceElement: src,
+    sourceSelector: selector,
+    targetSelector: null,
     trigger: async (ev: Event) => {
       if (!ctx.actor) {
         throw new Error("No event handler specified");
       }
       ctx.actor(ev);
     },
-    targetElement: null,
     triggerEvent: null,
     actor: null,
     swapper: null,

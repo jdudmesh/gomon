@@ -147,7 +147,7 @@ func (c *server) sendLogEvent(ev *console.LogEvent) error {
 
 	msg := KiloEvent{
 		Target: "#run-" + strconv.Itoa(ev.RunID),
-		Swap:   "beforeend scroll:view",
+		Swap:   "beforeend scroll:lastchild",
 		Markup: buffer.String(),
 	}
 	msgBytes, err := json.Marshal(msg)
@@ -171,7 +171,7 @@ func (c *server) sendRunEvent(ev *console.LogRun) error {
 
 	msg := KiloEvent{
 		Target: "#log-output-inner",
-		Swap:   "beforeend scroll:view",
+		Swap:   "beforeend scroll:lastchild",
 		Markup: buffer.String(),
 	}
 	msgBytes, err := json.Marshal(msg)

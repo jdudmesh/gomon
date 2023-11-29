@@ -19,6 +19,7 @@ const searchSelectInitActor = actor("#search-select")
 
 const logActor = actor("#log-output-inner")
   .get("/actions/search")
+  .swap("innerHTML scroll:lastchild")
 
 const searchFormActor = actor("#search-form")
   .get("/actions/search")
