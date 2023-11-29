@@ -21,9 +21,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 
+	"github.com/a-h/templ"
 	"github.com/jdudmesh/gomon/internal/config"
 	"github.com/jdudmesh/gomon/internal/console"
 	"github.com/jdudmesh/gomon/internal/process"
@@ -32,6 +34,13 @@ import (
 	"github.com/r3labs/sse/v2"
 	log "github.com/sirupsen/logrus"
 )
+
+type KiloEvent struct {
+	Target string `json:"x-kilo-target"`
+	Swap   string `json:"x-kilo-swap"`
+	Markup string `json:"x-kilo-markup"`
+	Action string `json:"x-kilo-action"`
+}
 
 type ChildProcess interface {
 	HardRestart(string) error
@@ -46,6 +55,14 @@ type server struct {
 	db           *sqlx.DB
 	childProcess ChildProcess
 	eventSink    chan interface{}
+}
+
+func withCORS(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		origin := r.Header.Get("Origin")
+		w.Header().Set("Access-Control-Allow-Origin", origin)
+		next.ServeHTTP(w, r)
+	})
 }
 
 func New(cfg *config.Config, childProcess ChildProcess, db *sqlx.DB) (*server, error) {
@@ -67,14 +84,17 @@ func New(cfg *config.Config, childProcess ChildProcess, db *sqlx.DB) (*server, e
 
 	srv.sseServer = sse.New()
 	srv.sseServer.AutoReplay = false
+	srv.sseServer.Headers["Access-Control-Allow-Origin"] = "*"
 	srv.sseServer.CreateStream("logs")
 	srv.sseServer.CreateStream("runs")
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/", srv.handleIndex)
-	mux.HandleFunc("/restart", srv.handleRestart)
-	mux.HandleFunc("/search", srv.handlSearch)
-	mux.HandleFunc("/__gomon__/events", srv.sseServer.ServeHTTP)
+	mux.HandleFunc("/", srv.indexPageHandler)
+	mux.Handle("/actions/restart", withCORS(http.HandlerFunc(srv.restartActionHandler)))
+	mux.Handle("/actions/search", withCORS(http.HandlerFunc(srv.searchActionHandler)))
+	mux.Handle("/components/search-select", withCORS(http.HandlerFunc(srv.searchSelectComponentHandler)))
+	mux.Handle("/sse", srv.sseServer)
+
 	srv.httpServer = &http.Server{
 		Addr:    fmt.Sprintf(":%d", srv.port),
 		Handler: mux,
@@ -95,27 +115,16 @@ func (c *server) Start() error {
 	log.Infof("UI server running on http://localhost:%d", c.port)
 
 	go func() {
+		err := (error)(nil)
 		for ev := range c.eventSink {
-			if logEvent, ok := ev.(*console.LogEvent); ok {
-				buffer := bytes.Buffer{}
-				err := Event(logEvent).Render(context.Background(), &buffer)
-				if err != nil {
-					log.Errorf("rendering event: %v", err)
-					continue
-				}
-				c.sseServer.Publish("logs", &sse.Event{
-					Data: buffer.Bytes(),
-				})
-
-			} else if logRun, ok := ev.(*console.LogRun); ok {
-				runDataBytes, err := json.Marshal(logRun)
-				if err != nil {
-					log.Errorf("marshalling run data: %v", err)
-					return
-				}
-				c.sseServer.Publish("runs", &sse.Event{
-					Data: runDataBytes,
-				})
+			switch ev := ev.(type) {
+			case *console.LogEvent:
+				err = c.sendLogEvent(ev)
+			case *console.LogRun:
+				err = c.sendRunEvent(ev)
+			}
+			if err != nil {
+				log.Errorf("sending log event: %v", err)
 			}
 		}
 	}()
@@ -126,6 +135,72 @@ func (c *server) Start() error {
 			log.Infof("shutting down UI server: %v", err)
 		}
 	}()
+
+	return nil
+}
+
+func (c *server) sendLogEvent(ev *console.LogEvent) error {
+	buffer := bytes.Buffer{}
+	err := Event(ev).Render(context.Background(), &buffer)
+	if err != nil {
+		return fmt.Errorf("rendering event: %w", err)
+	}
+
+	msg := KiloEvent{
+		Target: "#run-" + strconv.Itoa(ev.RunID),
+		Swap:   "beforeend scroll:view",
+		Markup: buffer.String(),
+	}
+	msgBytes, err := json.Marshal(msg)
+	if err != nil {
+		return fmt.Errorf("marshalling event: %w", err)
+	}
+
+	c.sseServer.Publish("logs", &sse.Event{
+		Data: msgBytes,
+	})
+
+	return nil
+}
+
+func (c *server) sendRunEvent(ev *console.LogRun) error {
+	buffer := bytes.Buffer{}
+	err := EmptyRun(ev.ID).Render(context.Background(), &buffer)
+	if err != nil {
+		return fmt.Errorf("rendering event: %w", err)
+	}
+
+	msg := KiloEvent{
+		Target: "#log-output > .blinking-cursor",
+		Swap:   "beforebegin scroll:view",
+		Markup: buffer.String(),
+	}
+	msgBytes, err := json.Marshal(msg)
+	if err != nil {
+		return fmt.Errorf("marshalling event: %w", err)
+	}
+	c.sseServer.Publish("logs", &sse.Event{
+		Data: msgBytes,
+	})
+
+	buffer = bytes.Buffer{}
+	err = c.searchSelectComponent(&buffer)
+	if err != nil {
+		log.Errorf("rendering: %v", err)
+		return fmt.Errorf("rendering event: %w", err)
+	}
+	msg = KiloEvent{
+		Target: "#search-select",
+		Swap:   "outerHTML",
+		Markup: buffer.String(),
+	}
+	msgBytes, err = json.Marshal(msg)
+	if err != nil {
+		return fmt.Errorf("marshalling event: %w", err)
+	}
+	c.sseServer.Publish("runs", &sse.Event{
+		Data: msgBytes,
+	})
 
 	return nil
 }
@@ -148,7 +223,7 @@ func (c *server) Close() error {
 	return nil
 }
 
-func (c *server) handleIndex(w http.ResponseWriter, r *http.Request) {
+func (c *server) indexPageHandler(w http.ResponseWriter, r *http.Request) {
 	var err error
 
 	runs := []*console.LogRun{}
@@ -184,7 +259,7 @@ func (c *server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (c *server) handleRestart(w http.ResponseWriter, r *http.Request) {
+func (c *server) restartActionHandler(w http.ResponseWriter, r *http.Request) {
 	err := c.childProcess.HardRestart(process.ForceHardRestart)
 	if err != nil {
 		log.Errorf("hard restart: %+v", err)
@@ -192,59 +267,112 @@ func (c *server) handleRestart(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-func (c *server) handlSearch(w http.ResponseWriter, r *http.Request) {
+func (c *server) searchActionHandler(w http.ResponseWriter, r *http.Request) {
 	var err error
-	run := r.URL.Query().Get("run")
+	runID := r.URL.Query().Get("run")
 	stm := r.URL.Query().Get("stm")
 	filter := r.URL.Query().Get("filter")
-	events := []*console.LogEvent{}
+	events := [][]*console.LogEvent{}
 
-	params := map[string]interface{}{"run_id": run}
-	sql := "SELECT * FROM events WHERE run_id = :run_id "
-	if !(stm == "" || stm == "all") {
-		sql += " AND event_type = :event_type "
-		params["event_type"] = stm
-	}
-	if filter != "" {
-		sql += " AND event_data LIKE :event_data "
-		params["event_data"] = "%" + filter + "%"
-	}
-	sql += " ORDER BY created_at ASC;"
-
-	res, err := c.db.NamedQuery(sql, params)
-	if err != nil {
-		log.Errorf("getting event: %v", err)
-		w.WriteHeader(http.StatusInternalServerError)
-		return
-	}
-	defer res.Close()
-	for res.Next() {
-		ev := new(console.LogEvent)
-		err = res.StructScan(ev)
+	if runID == "" {
+		err = c.db.Get(&runID, "SELECT id FROM runs ORDER BY created_at DESC LIMIT 1;")
 		if err != nil {
-			log.Errorf("scanning event: %v", err)
+			log.Errorf("getting run id: %v", err)
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
-		events = append(events, ev)
 	}
 
+	if runID != "" {
+		params := map[string]interface{}{"run_id": runID}
+		sql := "SELECT * FROM events WHERE "
+		if runID == "all" {
+			sql += "1 = 1 " // dummy clause
+		} else {
+			sql += "run_id = :run_id "
+		}
+		if !(stm == "" || stm == "all") {
+			sql += " AND event_type = :event_type "
+			params["event_type"] = stm
+		}
+		if filter != "" {
+			sql += " AND event_data LIKE :event_data "
+			params["event_data"] = "%" + filter + "%"
+		}
+		sql += " ORDER BY run_id ASC, created_at ASC;"
+
+		res, err := c.db.NamedQuery(sql, params)
+		if err != nil {
+			log.Errorf("getting event: %v", err)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		defer res.Close()
+
+		var lastRunID int = -1
+		for res.Next() {
+			ev := new(console.LogEvent)
+			err = res.StructScan(ev)
+			if err != nil {
+				log.Errorf("scanning event: %v", err)
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			if lastRunID != ev.RunID {
+				events = append(events, []*console.LogEvent{})
+				lastRunID = int(ev.RunID)
+			}
+			events[len(events)-1] = append(events[len(events)-1], ev)
+		}
+	}
+
+	markup := (templ.Component)(nil)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if len(events) == 0 {
-		_, err = w.Write([]byte("<div class=\"text-2xl text-bold\">no events found</div>"))
-		if err != nil {
-			log.Errorf("writing response: %v", err)
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-		w.WriteHeader(http.StatusOK)
-		return
+		markup = SearchNoResults()
+	} else {
+		markup = EventList(events)
 	}
 
-	markup := EventList(events)
 	err = markup.Render(r.Context(), w)
 	if err != nil {
 		log.Errorf("rendering index: %v", err)
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
+}
+
+func (c *server) searchSelectComponentHandler(w http.ResponseWriter, r *http.Request) {
+	buf := bytes.Buffer{}
+	err := c.searchSelectComponent(&buf)
+	if err != nil {
+		log.Errorf("rendering: %v", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Write(buf.Bytes())
+}
+
+func (c *server) searchSelectComponent(w io.Writer) error {
+	var err error
+
+	runs := []*console.LogRun{}
+	err = c.db.Select(&runs, "SELECT * FROM runs ORDER BY created_at DESC limit 50")
+	if err != nil {
+		return fmt.Errorf("getting runs: %w", err)
+	}
+
+	currentRun := 0
+	if len(runs) > 0 {
+		currentRun = int(runs[0].ID)
+	}
+
+	markup := SearchSelect(runs, currentRun)
+	err = markup.Render(context.Background(), w)
+	if err != nil {
+		return fmt.Errorf("rendering data: %w", err)
+	}
+
+	return nil
 }

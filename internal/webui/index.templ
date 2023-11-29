@@ -21,18 +21,43 @@ import (
 	"github.com/jdudmesh/gomon/internal/console"
 )
 
+templ SearchNoResults() {
+	<div class="text-2xl text-bold">no events found</div>
+}
+
+templ SearchSelect(runs []*console.LogRun, currentRun int) {
+	<select id="search-select" name="run" class="select select-sm select-bordered text-slate-900 w-48">
+		<option value="all" selected>All</option>
+		for _, r := range runs {
+			<option
+				value={ strconv.Itoa(r.ID) }
+				if int(r.ID) == currentRun {
+					selected?={ true }
+				}
+			>{ r.CreatedAt.Format("2006-01-02 15:04:05") }</option>
+		}
+	</select>
+}
+
 templ Event(ev *console.LogEvent) {
-	<div class="flex flex-row text-blue-400 font-mono" data-event-date="{ev.CreatedAt}">
-		<div class="w-1/6">{ ev.CreatedAt.Format("15:04:05.000") }</div>
-		<div class="w-5/6 break-all">{ ev.EventData }</div>
+	<div class="flex flex-row text-green-400 items-stretch" data-event-date="{ev.CreatedAt}">
+		<div class="w-36 grow-0 shrink-0">{ ev.CreatedAt.Format("15:04:05.000") }</div>
+		<div class="break-all grow">{ ev.EventData }</div>
 	</div>
 }
 
-templ EventList(events []*console.LogEvent) {
-	for _, ev := range events {
-		<div class="flex flex-row text-blue-400 font-mono" data-event-date="{ev.CreatedAt}">
-			<div class="w-1/6">{ ev.CreatedAt.Format("15:04:05.000") }</div>
-			<div class="w-5/6 break-all">{ ev.EventData }</div>
+templ EmptyRun(id int) {
+	<hr class="h-px my-8 bg-green-400 border-0 dark:bg-green-700" />
+	<div class="my-4" id={"run-" + strconv.Itoa(id)}>
+	</div>
+}
+
+templ EventList(events [][]*console.LogEvent) {
+	for _, run := range events {
+		<div class="my-4" id={"run-" + strconv.Itoa(run[0].ID)}>
+			for _, ev := range run {
+				@Event(ev)
+			}
 		</div>
 	}
 }
@@ -77,7 +102,7 @@ templ Console(currentRun int, runs []*console.LogRun, events []*console.LogEvent
 				</div>
 			</nav>
 			<main id="event-list" class="grow mx-4 my-2 p-4 border-solid border border-blue-400 rounded-lg flex flex-col overflow-y-auto">
-				@EventList(events)
+				hello
 			</main>
 			<script>
 				const currentRun = document.body.getAttribute("data-current-run");
@@ -114,4 +139,3 @@ templ Console(currentRun int, runs []*console.LogRun, events []*console.LogEvent
 		</body>
 	</html>
 }
-

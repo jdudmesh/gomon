@@ -243,10 +243,8 @@ func (r *childProcess) startChild() {
 	r.isExpectingShutdown.Store(false)
 	r.isStarting.Store(true)
 	r.isStarted.Store(false)
+	r.childInnerRunWait.Add(1)
 	go func() {
-		r.childInnerRunWait.Wait()
-
-		r.childInnerRunWait.Add(1)
 		defer r.childInnerRunWait.Done()
 
 		r.notifyEventSinks(Notification{Type: NotificationTypeStartup})
@@ -322,7 +320,6 @@ func (r *childProcess) startChild() {
 		} else {
 			r.childOuterRunWait.Done()
 		}
-
 	}()
 }
 
