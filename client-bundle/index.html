@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>gomon console</title>
+    <script src="/dist/main.js" type="module"></script>
+    <link rel="stylesheet" href="/dist/main.css" />
+    <style>
+      @keyframes blink {
+        0% {
+          opacity: 0;
+        }
+      }
+      .blinking-cursor::before {
+        content: "";
+        width: 5px;
+        height: 20px;
+        background: rgb(74, 222, 128);
+        display: inline-block;
+        animation: blink 1.5s steps(2) infinite;
+      }
+    </style>
+  </head>
+  <body class="bg-slate-900 text-white flex flex-col h-screen">
+    <nav class="grow-0 flex flex-row p-4 justify-between items-center bg-blue-500">
+      <div class="flex flex-row">
+        <a href="https://github.com/jdudmesh/gomon" target="_blank" class="text-2xl text-bold">gomon</a>
+      </div>
+      <div class="flex flex-row gap-2">
+        <form id="search-form" class="flex flex-row gap-2 text-slate-900">
+          <input id="search-input" name="q" type="text" class="input input-sm input-bordered w-96" placeholder="Search..." />
+          <select id="search-select" name="r" class="select select-sm select-bordered w-48"></select>
+          <button type="submit" class="btn btn-sm btn-secondary">Search</button>
+        </form>
+        <button id="restart" class="btn btn-sm btn-primary">Restart</button>
+      </div>
+    </nav>
+    <main id="log-output" class="m-4 font-mono overflow-y-scroll">
+      <div id="log-output-inner"></div>
+      <div class="blinking-cursor" />
+    </main>
+  </body>
+</html>

@@ -85,8 +85,7 @@ func New(cfg *config.Config, childProcess ChildProcess, db *sqlx.DB) (*server, e
 	srv.sseServer = sse.New()
 	srv.sseServer.AutoReplay = false
 	srv.sseServer.Headers["Access-Control-Allow-Origin"] = "*"
-	srv.sseServer.CreateStream("logs")
-	srv.sseServer.CreateStream("runs")
+	srv.sseServer.CreateStream("events")
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", srv.indexPageHandler)
@@ -156,7 +155,7 @@ func (c *server) sendLogEvent(ev *console.LogEvent) error {
 		return fmt.Errorf("marshalling event: %w", err)
 	}
 
-	c.sseServer.Publish("logs", &sse.Event{
+	c.sseServer.Publish("events", &sse.Event{
 		Data: msgBytes,
 	})
 
@@ -171,15 +170,15 @@ func (c *server) sendRunEvent(ev *console.LogRun) error {
 	}
 
 	msg := KiloEvent{
-		Target: "#log-output > .blinking-cursor",
-		Swap:   "beforebegin scroll:view",
+		Target: "#log-output-inner",
+		Swap:   "beforeend scroll:view",
 		Markup: buffer.String(),
 	}
 	msgBytes, err := json.Marshal(msg)
 	if err != nil {
 		return fmt.Errorf("marshalling event: %w", err)
 	}
-	c.sseServer.Publish("logs", &sse.Event{
+	c.sseServer.Publish("events", &sse.Event{
 		Data: msgBytes,
 	})
 
@@ -198,7 +197,7 @@ func (c *server) sendRunEvent(ev *console.LogRun) error {
 	if err != nil {
 		return fmt.Errorf("marshalling event: %w", err)
 	}
-	c.sseServer.Publish("runs", &sse.Event{
+	c.sseServer.Publish("events", &sse.Event{
 		Data: msgBytes,
 	})
 
@@ -269,9 +268,9 @@ func (c *server) restartActionHandler(w http.ResponseWriter, r *http.Request) {
 
 func (c *server) searchActionHandler(w http.ResponseWriter, r *http.Request) {
 	var err error
-	runID := r.URL.Query().Get("run")
+	runID := r.URL.Query().Get("r")
 	stm := r.URL.Query().Get("stm")
-	filter := r.URL.Query().Get("filter")
+	filter := r.URL.Query().Get("q")
 	events := [][]*console.LogEvent{}
 
 	if runID == "" {
@@ -284,11 +283,12 @@ func (c *server) searchActionHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if runID != "" {
-		params := map[string]interface{}{"run_id": runID}
+		params := map[string]interface{}{}
 		sql := "SELECT * FROM events WHERE "
 		if runID == "all" {
 			sql += "1 = 1 " // dummy clause
 		} else {
+			params["run_id"] = runID
 			sql += "run_id = :run_id "
 		}
 		if !(stm == "" || stm == "all") {
@@ -299,7 +299,7 @@ func (c *server) searchActionHandler(w http.ResponseWriter, r *http.Request) {
 			sql += " AND event_data LIKE :event_data "
 			params["event_data"] = "%" + filter + "%"
 		}
-		sql += " ORDER BY run_id ASC, created_at ASC;"
+		sql += " ORDER BY run_id ASC, created_at ASC limit 1000;"
 
 		res, err := c.db.NamedQuery(sql, params)
 		if err != nil {

@@ -26,7 +26,7 @@ templ SearchNoResults() {
 }
 
 templ SearchSelect(runs []*console.LogRun, currentRun int) {
-	<select id="search-select" name="run" class="select select-sm select-bordered text-slate-900 w-48">
+	<select id="search-select" name="r" class="select select-sm select-bordered text-slate-900 w-48" data-current-run-id={ strconv.Itoa(currentRun) }>
 		<option value="all" selected>All</option>
 		for _, r := range runs {
 			<option
@@ -54,6 +54,7 @@ templ EmptyRun(id int) {
 
 templ EventList(events [][]*console.LogEvent) {
 	for _, run := range events {
+		<hr class="h-px my-8 bg-green-400 border-0 dark:bg-green-700" />
 		<div class="my-4" id={"run-" + strconv.Itoa(run[0].ID)}>
 			for _, ev := range run {
 				@Event(ev)

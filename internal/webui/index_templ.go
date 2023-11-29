@@ -76,7 +76,15 @@ func SearchSelect(runs []*console.LogRun, currentRun int) templ.Component {
 			var_3 = templ.NopComponent
 		}
 		ctx = templ.ClearChildren(ctx)
-		_, err = templBuffer.WriteString("<select id=\"search-select\" name=\"run\" class=\"select select-sm select-bordered text-slate-900 w-48\"><option value=\"all\" selected>")
+		_, err = templBuffer.WriteString("<select id=\"search-select\" name=\"r\" class=\"select select-sm select-bordered text-slate-900 w-48\" data-current-run-id=\"")
+		if err != nil {
+			return err
+		}
+		_, err = templBuffer.WriteString(templ.EscapeString(strconv.Itoa(currentRun)))
+		if err != nil {
+			return err
+		}
+		_, err = templBuffer.WriteString("\"><option value=\"all\" selected>")
 		if err != nil {
 			return err
 		}
@@ -223,7 +231,7 @@ func EventList(events [][]*console.LogEvent) templ.Component {
 		}
 		ctx = templ.ClearChildren(ctx)
 		for _, run := range events {
-			_, err = templBuffer.WriteString("<div class=\"my-4\" id=\"")
+			_, err = templBuffer.WriteString("<hr class=\"h-px my-8 bg-green-400 border-0 dark:bg-green-700\"> <div class=\"my-4\" id=\"")
 			if err != nil {
 				return err
 			}
