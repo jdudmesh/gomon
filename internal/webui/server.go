@@ -89,6 +89,8 @@ func New(cfg *config.Config, childProcess ChildProcess, db *sqlx.DB) (*server, e
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", srv.indexPageHandler)
+	mux.HandleFunc("/dist/main.js", srv.clientBundleScriptHandler)
+	mux.HandleFunc("/dist/main.css", srv.clientBundleStylesheetHandler)
 	mux.Handle("/actions/restart", withCORS(http.HandlerFunc(srv.restartActionHandler)))
 	mux.Handle("/actions/search", withCORS(http.HandlerFunc(srv.searchActionHandler)))
 	mux.Handle("/components/search-select", withCORS(http.HandlerFunc(srv.searchSelectComponentHandler)))
@@ -222,42 +224,6 @@ func (c *server) Close() error {
 	return nil
 }
 
-func (c *server) indexPageHandler(w http.ResponseWriter, r *http.Request) {
-	var err error
-
-	runs := []*console.LogRun{}
-	err = c.db.Select(&runs, "SELECT * FROM runs ORDER BY created_at DESC")
-	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		return
-	}
-
-	run := int(runs[0].ID)
-	runParam := r.URL.Query().Get("run")
-	if !(runParam == "" || runParam == "current") {
-		run, err = strconv.Atoi(runParam)
-		if err != nil {
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-	}
-
-	events := []*console.LogEvent{}
-	err = c.db.Select(&events, "SELECT * FROM events WHERE run_id = ? ORDER BY created_at ASC", run)
-	if err != nil {
-		log.Errorf("getting event: %v", err)
-		w.WriteHeader(http.StatusInternalServerError)
-		return
-	}
-
-	page := Console(run, runs, events)
-	err = page.Render(r.Context(), w)
-	if err != nil {
-		log.Errorf("rendering index: %v", err)
-		w.WriteHeader(http.StatusInternalServerError)
-	}
-}
-
 func (c *server) restartActionHandler(w http.ResponseWriter, r *http.Request) {
 	err := c.childProcess.HardRestart(process.ForceHardRestart)
 	if err != nil {
@@ -375,4 +341,22 @@ func (c *server) searchSelectComponent(w io.Writer) error {
 	}
 
 	return nil
+}
+
+func (c *server) indexPageHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Write(index)
+	w.WriteHeader(http.StatusOK)
+}
+
+func (c *server) clientBundleScriptHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
+	w.Write(script)
+	w.WriteHeader(http.StatusOK)
+}
+
+func (c *server) clientBundleStylesheetHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/css; charset=utf-8")
+	w.Write(stylesheet)
+	w.WriteHeader(http.StatusOK)
 }
