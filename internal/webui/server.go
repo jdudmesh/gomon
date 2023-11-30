@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -42,9 +43,10 @@ type KiloEvent struct {
 	Action string `json:"x-kilo-action"`
 }
 
-type ChildProcess interface {
+type childProcess interface {
 	HardRestart(string) error
 	SoftRestart(string) error
+	Fatal(error)
 }
 
 type server struct {
@@ -53,7 +55,7 @@ type server struct {
 	httpServer   *http.Server
 	sseServer    *sse.Server
 	db           *sqlx.DB
-	childProcess ChildProcess
+	childProcess childProcess
 	eventSink    chan interface{}
 }
 
@@ -65,12 +67,12 @@ func withCORS(next http.Handler) http.Handler {
 	})
 }
 
-func New(cfg *config.Config, childProcess ChildProcess, db *sqlx.DB) (*server, error) {
+func New(cfg *config.Config, process childProcess, db *sqlx.DB) (*server, error) {
 	srv := &server{
 		enabled:      cfg.UI.Enabled,
 		port:         cfg.UI.Port,
 		db:           db,
-		childProcess: childProcess,
+		childProcess: process,
 		eventSink:    make(chan interface{}),
 	}
 
@@ -104,10 +106,6 @@ func New(cfg *config.Config, childProcess ChildProcess, db *sqlx.DB) (*server, e
 	return srv, nil
 }
 
-func (c *server) EventSink() chan interface{} {
-	return c.eventSink
-}
-
 func (c *server) Start() error {
 	if !c.enabled {
 		return nil
@@ -128,12 +126,14 @@ func (c *server) Start() error {
 				log.Errorf("sending log event: %v", err)
 			}
 		}
+		log.Info("closing event monitor")
 	}()
 
 	go func() {
 		err := c.httpServer.ListenAndServe()
-		if err != nil && err != http.ErrServerClosed {
-			log.Infof("shutting down UI server: %v", err)
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Infof("UI server shut down unexpectedly: %v", err)
+			c.childProcess.Fatal(err)
 		}
 	}()
 
