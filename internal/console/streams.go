@@ -25,20 +25,21 @@ import (
 	"time"
 
 	"github.com/jdudmesh/gomon/internal/config"
-	"github.com/jdudmesh/gomon/internal/process"
+	notif "github.com/jdudmesh/gomon/internal/notification"
 	"github.com/jmoiron/sqlx"
 	_ "github.com/mattn/go-sqlite3"
 	log "github.com/sirupsen/logrus"
 )
 
 type streams struct {
-	enabled          bool
-	db               *sqlx.DB
-	stdoutWriter     chan string
-	stderrWriter     chan string
-	currentRunID     atomic.Int64
-	consoleListeners []chan interface{}
-	closed           atomic.Bool
+	enabled             bool
+	db                  *sqlx.DB
+	stdoutWriter        chan string
+	stderrWriter        chan string
+	currentRunID        atomic.Int64
+	globalSystemControl notif.NotificationChannel
+	eventSinks          []notif.NotificationSink
+	closed              atomic.Bool
 }
 
 type streamWriter struct {
@@ -58,30 +59,22 @@ type LogEvent struct {
 	CreatedAt time.Time `db:"created_at" json:"createdAt"`
 }
 
-func New(cfg *config.Config, db *sqlx.DB) (*streams, error) {
+func New(cfg *config.Config, gsc notif.NotificationChannel, db *sqlx.DB) (*streams, error) {
 	stm := &streams{
-		enabled:          cfg.UI.Enabled,
-		db:               db,
-		stdoutWriter:     make(chan string),
-		stderrWriter:     make(chan string),
-		consoleListeners: []chan interface{}{},
-		closed:           atomic.Bool{},
+		enabled:             cfg.UI.Enabled,
+		db:                  db,
+		stdoutWriter:        make(chan string),
+		stderrWriter:        make(chan string),
+		globalSystemControl: gsc,
+		eventSinks:          []notif.NotificationSink{},
+		closed:              atomic.Bool{},
 	}
 
 	return stm, nil
 }
 
-func (s *streams) AddEventSink(sink chan interface{}) {
-	s.consoleListeners = append(s.consoleListeners, sink)
-}
-
-func (s *streams) RemoveEventSink(sink chan interface{}) {
-	for i, listener := range s.consoleListeners {
-		if listener == sink {
-			s.consoleListeners = append(s.consoleListeners[:i], s.consoleListeners[i+1:]...)
-			break
-		}
-	}
+func (s *streams) AddEventSink(sink notif.NotificationSink) {
+	s.eventSinks = append(s.eventSinks, sink)
 }
 
 func (s *streams) Start() error {
@@ -107,9 +100,9 @@ func (s *streams) Start() error {
 					log.Errorf("writing stderr: %v", err)
 				}
 			}
+			log.Debug("console streams loop")
 		}
 	}()
-
 	return nil
 }
 
@@ -153,49 +146,39 @@ func (s *streams) write(logType, logData string) error {
 			return fmt.Errorf("getting last insert id: %w", err)
 		}
 
-		event := &LogEvent{
-			ID:        int(eventID),
-			RunID:     int(runID),
-			EventType: logType,
-			EventData: line,
-			CreatedAt: eventDate,
+		n := notif.Notification{
+			Type: notif.NotificationTypeLogEvent,
+			Metadata: &LogEvent{
+				ID:        int(eventID),
+				RunID:     int(runID),
+				EventType: logType,
+				EventData: line,
+				CreatedAt: eventDate,
+			},
 		}
 
-		s.notifyEventListeners(event)
+		s.notifyEventListeners(n)
 	}
 
 	return nil
 }
 
-func (s *streams) Notify(n process.Notification) {
+func (s *streams) Notify(n notif.Notification) {
 	if s == nil {
 		return
 	}
-	if n.Type != process.NotificationTypeStartup {
+
+	if n.Type != notif.NotificationTypeStartup {
 		return
 	}
 
-	runDate := time.Now()
-	res, err := s.db.Exec("INSERT INTO runs (created_at) VALUES ($1)", runDate)
-	if err != nil {
-		log.Errorf("inserting run: %v", err)
-	}
-	runID, err := res.LastInsertId()
-	if err != nil {
-		log.Errorf("getting last insert id: %v", err)
-	}
-	s.currentRunID.Store(runID)
-
-	run := &LogRun{
-		ID:        int(runID),
-		CreatedAt: runDate,
-	}
-	s.notifyEventListeners(run)
+	runID := n.Metadata.(*LogRun).ID
+	s.currentRunID.Store(int64(runID))
 }
 
-func (s *streams) notifyEventListeners(event interface{}) {
-	for _, listener := range s.consoleListeners {
-		listener <- event
+func (s *streams) notifyEventListeners(n notif.Notification) {
+	for _, listener := range s.eventSinks {
+		listener.Notify(n)
 	}
 }
 

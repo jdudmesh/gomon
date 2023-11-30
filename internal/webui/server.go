@@ -25,10 +25,12 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"sync/atomic"
 
 	"github.com/a-h/templ"
 	"github.com/jdudmesh/gomon/internal/config"
 	"github.com/jdudmesh/gomon/internal/console"
+	notif "github.com/jdudmesh/gomon/internal/notification"
 	"github.com/jdudmesh/gomon/internal/process"
 	"github.com/jmoiron/sqlx"
 	_ "github.com/mattn/go-sqlite3"
@@ -43,20 +45,15 @@ type KiloEvent struct {
 	Action string `json:"x-kilo-action"`
 }
 
-type childProcess interface {
-	HardRestart(string) error
-	SoftRestart(string) error
-	Fatal(error)
-}
-
 type server struct {
-	enabled      bool
-	port         int
-	httpServer   *http.Server
-	sseServer    *sse.Server
-	db           *sqlx.DB
-	childProcess childProcess
-	eventSink    chan interface{}
+	isEnabled           bool
+	port                int
+	httpServer          *http.Server
+	sseServer           *sse.Server
+	db                  *sqlx.DB
+	globalSystemControl notif.NotificationChannel
+	eventSink           chan notif.Notification
+	isClosed            atomic.Bool
 }
 
 func withCORS(next http.Handler) http.Handler {
@@ -67,16 +64,17 @@ func withCORS(next http.Handler) http.Handler {
 	})
 }
 
-func New(cfg *config.Config, process childProcess, db *sqlx.DB) (*server, error) {
+func New(cfg *config.Config, gsc notif.NotificationChannel, db *sqlx.DB) (*server, error) {
 	srv := &server{
-		enabled:      cfg.UI.Enabled,
-		port:         cfg.UI.Port,
-		db:           db,
-		childProcess: process,
-		eventSink:    make(chan interface{}),
+		isEnabled:           cfg.UI.Enabled,
+		port:                cfg.UI.Port,
+		db:                  db,
+		globalSystemControl: gsc,
+		eventSink:           make(chan notif.Notification),
+		isClosed:            atomic.Bool{},
 	}
 
-	if !srv.enabled {
+	if !srv.isEnabled {
 		return srv, nil
 	}
 
@@ -107,20 +105,30 @@ func New(cfg *config.Config, process childProcess, db *sqlx.DB) (*server, error)
 }
 
 func (c *server) Start() error {
-	if !c.enabled {
+	if !c.isEnabled {
 		return nil
 	}
 
-	log.Infof("UI server running on http://localhost:%d", c.port)
+	log.Infof("Starting UI server on http://localhost:%d", c.port)
+	go func() {
+		err := c.httpServer.ListenAndServe()
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			c.globalSystemControl <- notif.Notification{
+				Type:     notif.NotificationTypeSystemError,
+				Message:  fmt.Sprintf("ui server shut down unexpectedly: %v", err),
+				Metadata: err,
+			}
+		}
+	}()
 
 	go func() {
 		err := (error)(nil)
 		for ev := range c.eventSink {
-			switch ev := ev.(type) {
-			case *console.LogEvent:
-				err = c.sendLogEvent(ev)
-			case *console.LogRun:
-				err = c.sendRunEvent(ev)
+			switch ev.Type {
+			case notif.NotificationTypeStartup:
+				err = c.sendRunEvent(ev.Metadata.(*console.LogRun))
+			case notif.NotificationTypeLogEvent:
+				err = c.sendLogEvent(ev.Metadata.(*console.LogEvent))
 			}
 			if err != nil {
 				log.Errorf("sending log event: %v", err)
@@ -129,15 +137,37 @@ func (c *server) Start() error {
 		log.Info("closing event monitor")
 	}()
 
-	go func() {
-		err := c.httpServer.ListenAndServe()
-		if err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Infof("UI server shut down unexpectedly: %v", err)
-			c.childProcess.Fatal(err)
+	return nil
+}
+
+func (c *server) Close() error {
+	if c.isClosed.Load() {
+		return nil
+	}
+	log.Info("closing UI server")
+	c.isClosed.Store(true)
+
+	close(c.eventSink)
+
+	if c.sseServer != nil {
+		c.sseServer.Close()
+	}
+
+	if c.httpServer != nil {
+		err := c.httpServer.Close()
+		if err != nil {
+			return fmt.Errorf("closing http server: %w", err)
 		}
-	}()
+	}
 
 	return nil
+}
+
+func (c *server) Notify(n notif.Notification) {
+	if c.isClosed.Load() {
+		return
+	}
+	c.eventSink <- n
 }
 
 func (c *server) sendLogEvent(ev *console.LogEvent) error {
@@ -206,28 +236,10 @@ func (c *server) sendRunEvent(ev *console.LogRun) error {
 	return nil
 }
 
-func (c *server) Close() error {
-	log.Info("closing UI server")
-	close(c.eventSink)
-
-	if c.sseServer != nil {
-		c.sseServer.Close()
-	}
-
-	if c.httpServer != nil {
-		err := c.httpServer.Close()
-		if err != nil {
-			return fmt.Errorf("closing http server: %w", err)
-		}
-	}
-
-	return nil
-}
-
 func (c *server) restartActionHandler(w http.ResponseWriter, r *http.Request) {
-	err := c.childProcess.HardRestart(process.ForceHardRestart)
-	if err != nil {
-		log.Errorf("hard restart: %+v", err)
+	c.globalSystemControl <- notif.Notification{
+		Type:    notif.NotificationTypeHardRestart,
+		Message: process.ForceHardRestart,
 	}
 	w.WriteHeader(http.StatusOK)
 }
@@ -346,17 +358,14 @@ func (c *server) searchSelectComponent(w io.Writer) error {
 func (c *server) indexPageHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Write(index)
-	w.WriteHeader(http.StatusOK)
 }
 
 func (c *server) clientBundleScriptHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
 	w.Write(script)
-	w.WriteHeader(http.StatusOK)
 }
 
 func (c *server) clientBundleStylesheetHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/css; charset=utf-8")
 	w.Write(stylesheet)
-	w.WriteHeader(http.StatusOK)
 }

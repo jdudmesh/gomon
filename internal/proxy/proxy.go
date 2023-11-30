@@ -26,10 +26,11 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/jdudmesh/gomon/internal/config"
-	"github.com/jdudmesh/gomon/internal/process"
+	notif "github.com/jdudmesh/gomon/internal/notification"
 	"github.com/r3labs/sse/v2"
 	log "github.com/sirupsen/logrus"
 )
@@ -47,23 +48,27 @@ const gomonInjectCode = `
 const headTag = `<head>`
 
 type webProxy struct {
-	enabled           bool
-	port              int
-	downstreamHost    string
-	downstreamTimeout time.Duration
-	eventSink         chan process.Notification
-	httpServer        *http.Server
-	sseServer         *sse.Server
-	injectCode        string
+	isEnabled           bool
+	port                int
+	downstreamHost      string
+	downstreamTimeout   time.Duration
+	globalSystemControl notif.NotificationChannel
+	eventSink           chan notif.Notification
+	isClosed            atomic.Bool
+	httpServer          *http.Server
+	sseServer           *sse.Server
+	injectCode          string
 }
 
-func New(cfg *config.Config) (*webProxy, error) {
+func New(cfg *config.Config, gsc notif.NotificationChannel) (*webProxy, error) {
 	proxy := &webProxy{
-		enabled:           cfg.Proxy.Enabled,
-		port:              cfg.Proxy.Port,
-		downstreamHost:    cfg.Proxy.Downstream.Host,
-		downstreamTimeout: time.Duration(cfg.Proxy.Downstream.Timeout) * time.Second,
-		eventSink:         make(chan process.Notification),
+		isEnabled:           cfg.Proxy.Enabled,
+		port:                cfg.Proxy.Port,
+		downstreamHost:      cfg.Proxy.Downstream.Host,
+		downstreamTimeout:   time.Duration(cfg.Proxy.Downstream.Timeout) * time.Second,
+		globalSystemControl: gsc,
+		eventSink:           make(chan notif.Notification),
+		isClosed:            atomic.Bool{},
 	}
 
 	err := proxy.initProxy()
@@ -75,13 +80,13 @@ func New(cfg *config.Config) (*webProxy, error) {
 }
 
 func (p *webProxy) initProxy() error {
-	if !p.enabled && p.port == 0 {
+	if !p.isEnabled && p.port == 0 {
 		return nil
 	}
 
 	if p.port == 0 {
 		p.port = 4000
-		p.enabled = true
+		p.isEnabled = true
 	}
 
 	if p.downstreamHost == "" {
@@ -125,19 +130,25 @@ func (p *webProxy) initProxy() error {
 }
 
 func (p *webProxy) Start() error {
-	if !p.enabled {
+	if !p.isEnabled {
 		return nil
 	}
 
 	log.Infof("proxy server running on http://localhost:%d", p.port)
 	go func() {
 		err := p.httpServer.ListenAndServe()
-		log.Infof("shutting down proxy server: %v", err)
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			p.globalSystemControl <- notif.Notification{
+				Type:     notif.NotificationTypeSystemError,
+				Message:  fmt.Sprintf("proxy server shut down unexpectedly: %v", err),
+				Metadata: err,
+			}
+		}
 	}()
 
 	go func() {
 		for msg := range p.eventSink {
-			if msg.Type == process.NotificationTypeHardRestart || msg.Type == process.NotificationTypeSoftRestart {
+			if msg.Type == notif.NotificationTypeHardRestart || msg.Type == notif.NotificationTypeSoftRestart {
 				log.Infof("notifying browser: %s", msg.Message)
 				p.sseServer.Publish("hmr", &sse.Event{
 					Data: []byte(msg.Message),
@@ -150,6 +161,12 @@ func (p *webProxy) Start() error {
 }
 
 func (p *webProxy) Close() error {
+	if p.isClosed.Load() {
+		return nil
+	}
+
+	p.isClosed.Store(true)
+
 	if p.sseServer != nil {
 		p.sseServer.Close()
 	}
@@ -163,7 +180,10 @@ func (p *webProxy) Close() error {
 	return nil
 }
 
-func (p *webProxy) Notify(n process.Notification) {
+func (p *webProxy) Notify(n notif.Notification) {
+	if p.isClosed.Load() {
+		return
+	}
 	p.eventSink <- n
 }
 

@@ -29,6 +29,7 @@ import (
 
 	"github.com/jdudmesh/gomon/internal/config"
 	"github.com/jdudmesh/gomon/internal/console"
+	"github.com/jdudmesh/gomon/internal/notification"
 	"github.com/jdudmesh/gomon/internal/process"
 	"github.com/jdudmesh/gomon/internal/proxy"
 	"github.com/jdudmesh/gomon/internal/watcher"
@@ -90,8 +91,10 @@ func main() {
 		log.Fatalf("Cannot set working directory: %v", err)
 	}
 
+	globalSystemControl := notification.NewChannel()
+
 	// init the web proxy
-	proxy, err := proxy.New(cfg)
+	proxy, err := proxy.New(cfg, globalSystemControl)
 	if err != nil {
 		log.Fatalf("creating proxy: %v", err)
 	}
@@ -122,7 +125,7 @@ func main() {
 	}
 
 	// create the console redirector
-	console, err := console.New(cfg, db)
+	console, err := console.New(cfg, globalSystemControl, db)
 	if err != nil {
 		log.Fatalf("creating console: %v", err)
 	}
@@ -140,7 +143,7 @@ func main() {
 	}
 
 	// init the child process
-	childProcess, err := process.New(cfg,
+	childProcess, err := process.New(cfg, db,
 		process.WithConsoleOutput(console),
 		process.WithEventSink(console),
 		process.WithEventSink(proxy))
@@ -158,20 +161,22 @@ func main() {
 
 	// init the web UI
 	if cfg.UI.Enabled {
-		ui, err := webui.New(cfg, childProcess, db)
+		ui, err := webui.New(cfg, globalSystemControl, db)
 		if err != nil {
 			log.Fatalf("creating web UI: %v", err)
 		}
 		defer func() {
-			console.RemoveEventSink(ui.EventSink())
 			ui.Close()
 		}()
 
-		console.AddEventSink(ui.EventSink())
+		childProcess.AddEventSink(ui)
+		console.AddEventSink(ui)
+
 		err = ui.Start()
 		if err != nil {
 			log.Fatalf("starting web UI: %v", err)
 		}
+		defer ui.Close()
 	}
 
 	// all components should be up and running by now
@@ -184,6 +189,29 @@ func main() {
 		log.Fatalf("running monitor: %v", err)
 	}
 
+	// listen for system notifications
+	go func() {
+		for n := range globalSystemControl {
+			switch n.Type {
+			case notification.NotificationTypeSystemError:
+				log.Error(n.Metadata.(error))
+				fallthrough
+			case notification.NotificationTypeSystemShutdown:
+				childProcess.Close()
+			case notification.NotificationTypeHardRestart:
+				err = childProcess.HardRestart(n.Message)
+				if err != nil {
+					log.Fatalf("hard restarting child process: %v", err)
+				}
+			case notification.NotificationTypeSoftRestart:
+				err = childProcess.SoftRestart(n.Message)
+				if err != nil {
+					log.Fatalf("soft restarting child process: %v", err)
+				}
+			}
+		}
+	}()
+
 	// listen for quit signal
 	sigint := make(chan os.Signal, 1)
 	defer close(sigint)
@@ -193,10 +221,16 @@ func main() {
 			switch s {
 			case syscall.SIGHUP:
 				log.Info("received signal, restarting")
-				_ = childProcess.HardRestart("SIGHUP")
+				globalSystemControl <- notification.Notification{
+					Type:    notification.NotificationTypeHardRestart,
+					Message: "SIGHUP",
+				}
 			case os.Interrupt, syscall.SIGTERM:
 				log.Info("received signal, exiting")
-				childProcess.Close()
+				globalSystemControl <- notification.Notification{
+					Type:    notification.NotificationTypeSystemShutdown,
+					Message: "SIGTERM",
+				}
 			}
 		}
 	}()
@@ -205,7 +239,6 @@ func main() {
 	if err != nil {
 		log.Fatalf("starting child process: %v", err)
 	}
-
 }
 
 func loadConfig() (*config.Config, error) {
