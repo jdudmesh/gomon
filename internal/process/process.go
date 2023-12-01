@@ -50,31 +50,40 @@ type consoleOutput interface {
 	Stderr() io.Writer
 }
 
+type processState int64
+
+const (
+	processStateStopped processState = iota
+	processStateStarting
+	processStateStarted
+	processStateStopping
+	processStateClosed
+)
+
 const ipcStatusDisconnected = "Disconnected"
 const initialBackoff = 50 * time.Millisecond
 const maxBackoff = 5 * time.Second
 
 type childProcess struct {
-	rootDirectory       string
-	entrypoint          string
-	envVars             []string
-	entrypointArgs      []string
-	prestart            []string
-	db                  *sqlx.DB
-	currentRunID        atomic.Int64
-	childCmd            atomic.Value
-	childInnerRunWait   sync.WaitGroup
-	childOuterRunWait   sync.WaitGroup
-	isStarting          atomic.Bool
-	isStarted           atomic.Bool
-	isExpectingShutdown atomic.Bool
-	isClosed            atomic.Bool
-	backoff             time.Duration
-	childCmdClosed      chan bool
-	consoleOutput       consoleOutput
-	ipcServer           *ipc.Server
-	eventSinks          []notif.NotificationSink
-	killTimeout         time.Duration // TODO: make configurable
+	rootDirectory     string
+	entrypoint        string
+	envVars           []string
+	entrypointArgs    []string
+	prestart          []string
+	db                *sqlx.DB
+	currentRunID      atomic.Int64
+	childCmd          atomic.Value
+	childInnerRunWait sync.WaitGroup
+	childOuterRunWait sync.WaitGroup
+	state             atomic.Int64
+	backoff           time.Duration
+	childCmdClosed    chan bool
+	consoleOutput     consoleOutput
+	ipcServer         *ipc.Server
+	ipcChannel        string
+	ipcServerLock     sync.Mutex
+	eventSinks        []notif.NotificationSink
+	killTimeout       time.Duration // TODO: make configurable
 }
 
 type ChildProcessOption func(*childProcess) error
@@ -95,22 +104,20 @@ func WithEventSink(sink notif.NotificationSink) ChildProcessOption {
 
 func New(cfg *config.Config, db *sqlx.DB, opts ...ChildProcessOption) (*childProcess, error) {
 	proc := &childProcess{
-		rootDirectory:       cfg.RootDirectory,
-		entrypoint:          cfg.Entrypoint,
-		envVars:             os.Environ(),
-		entrypointArgs:      cfg.EntrypointArgs,
-		prestart:            cfg.Prestart,
-		db:                  db,
-		currentRunID:        atomic.Int64{},
-		childInnerRunWait:   sync.WaitGroup{},
-		childOuterRunWait:   sync.WaitGroup{},
-		isStarting:          atomic.Bool{},
-		isStarted:           atomic.Bool{},
-		isExpectingShutdown: atomic.Bool{},
-		isClosed:            atomic.Bool{},
-		childCmdClosed:      make(chan bool, 1),
-		eventSinks:          []notif.NotificationSink{},
-		killTimeout:         5 * time.Second,
+		rootDirectory:     cfg.RootDirectory,
+		entrypoint:        cfg.Entrypoint,
+		envVars:           os.Environ(),
+		entrypointArgs:    cfg.EntrypointArgs,
+		prestart:          cfg.Prestart,
+		db:                db,
+		currentRunID:      atomic.Int64{},
+		childInnerRunWait: sync.WaitGroup{},
+		childOuterRunWait: sync.WaitGroup{},
+		ipcChannel:        "gomon-" + uuid.New().String(),
+		ipcServerLock:     sync.Mutex{},
+		childCmdClosed:    make(chan bool, 1),
+		eventSinks:        []notif.NotificationSink{},
+		killTimeout:       5 * time.Second,
 	}
 
 	for _, opt := range opts {
@@ -134,95 +141,109 @@ func New(cfg *config.Config, db *sqlx.DB, opts ...ChildProcessOption) (*childPro
 	return proc, nil
 }
 
-func (r *childProcess) Start() error {
+func (c *childProcess) Start() error {
+	err := c.startIPCServer()
+	if err != nil {
+		return fmt.Errorf("starting ipc server: %w", err)
+	}
+
 	log.Debug("starting child process")
-	r.backoff = initialBackoff
-	r.childOuterRunWait.Add(1)
-	r.startChild()
-	r.childOuterRunWait.Wait()
-	r.childCmdClosed <- true
+	c.backoff = initialBackoff
+	c.childOuterRunWait.Add(1)
+	c.startChild()
+	c.childOuterRunWait.Wait()
+	c.childCmdClosed <- true
 	return nil
 }
 
-func (r *childProcess) Close() error {
-	if r.isClosed.Load() {
+func (c *childProcess) Close() error {
+	if c.getState() == processStateClosed {
 		return nil
 	}
 
-	if r.ipcServer != nil {
-		err := r.ipcServer.Write(gomonclient.MsgTypeShutdown, nil)
-		if err != nil {
-			log.Errorf("ipc write: %+v", err)
-		}
-		log.Info("closing IPC server")
-		r.ipcServer.Close()
-	}
-
-	err := r.closeChild()
+	err := c.closeChild()
 	if err != nil {
 		return fmt.Errorf("terminating child process: %w", err)
 	}
 
+	c.ipcServerLock.Lock()
+	defer c.ipcServerLock.Unlock()
+	if c.ipcServer != nil {
+		log.Info("closing IPC server")
+		c.ipcServer.Close()
+		c.ipcServer = nil
+	}
+
 	return nil
 }
 
-func (r *childProcess) AddEventSink(sink notif.NotificationSink) {
-	r.eventSinks = append(r.eventSinks, sink)
+func (c *childProcess) AddEventSink(sink notif.NotificationSink) {
+	c.eventSinks = append(c.eventSinks, sink)
 }
 
-func (r *childProcess) HardRestart(path string) error {
-	r.notifyEventSinks(notif.Notification{
+func (c *childProcess) HardRestart(path string) error {
+	c.notifyEventSinks(notif.Notification{
 		Type:    notif.NotificationTypeLogEvent,
 		Message: "***hard restart requested***",
 		Metadata: &console.LogEvent{
-			RunID:     int(r.currentRunID.Load()),
+			RunID:     int(c.currentRunID.Load()),
 			EventType: ForceHardRestart,
 			EventData: fmt.Sprintf("***hard restart requested (%s)***", path),
 			CreatedAt: time.Now(),
 		},
 	})
 
-	isStarting := r.isStarting.Load()
-	if isStarting {
+	state := c.getState()
+	if !(state == processStateStarted || state == processStateStopped) {
 		return nil
 	}
 
 	log.Infof("hard restart: %s", path)
 
-	r.childOuterRunWait.Add(1)
+	c.childOuterRunWait.Add(1)
 
-	err := r.closeChild()
+	err := c.closeChild()
 	if err != nil {
 		return fmt.Errorf("terminating child process: %w", err)
 	}
 
-	r.backoff = initialBackoff
-	r.isExpectingShutdown.Store(false)
-	r.startChild()
+	c.backoff = initialBackoff
+	c.startChild()
 
 	return nil
 }
 
-func (r *childProcess) SoftRestart(path string) error {
-	r.notifyEventSinks(notif.Notification{
+func (c *childProcess) SoftRestart(path string) error {
+	c.ipcServerLock.Lock()
+	defer c.ipcServerLock.Unlock()
+
+	c.notifyEventSinks(notif.Notification{
 		Type:    notif.NotificationTypeLogEvent,
 		Message: "***soft restart requested***",
 		Metadata: &console.LogEvent{
-			RunID:     int(r.currentRunID.Load()),
+			RunID:     int(c.currentRunID.Load()),
 			EventType: ForceSoftRestart,
 			EventData: "***soft restart requested***",
 			CreatedAt: time.Now(),
 		},
 	})
 
-	isStarting := r.isStarting.Load()
-	if isStarting {
+	if c.getState() != processStateStarted {
 		return nil
 	}
 
 	log.Infof("soft restart: %s", path)
 
-	err := r.ipcServer.Write(gomonclient.MsgTypeReload, []byte(path))
+	if c.ipcServer == nil {
+		return nil
+	}
+
+	if c.ipcServer.StatusCode() != ipc.Connected {
+		log.Warn("ipc server not connected, cannot perform soft restart")
+		return nil
+	}
+
+	err := c.ipcServer.Write(gomonclient.MsgTypeReload, []byte(path))
 	if err != nil {
 		log.Errorf("ipc write: %+v", err)
 	}
@@ -230,7 +251,7 @@ func (r *childProcess) SoftRestart(path string) error {
 	return nil
 }
 
-func (r *childProcess) RunOutOfBandTask(task string) error {
+func (c *childProcess) RunOutOfBandTask(task string) error {
 	log.Infof("running task: %s", task)
 
 	stdoutBuf := &bytes.Buffer{}
@@ -238,11 +259,11 @@ func (r *childProcess) RunOutOfBandTask(task string) error {
 
 	args := strings.Split(task, " ")
 	cmd := exec.Command(args[0], args[1:]...)
-	cmd.Dir = r.rootDirectory
+	cmd.Dir = c.rootDirectory
 	cmd.Stdout = stdoutBuf
 	cmd.Stderr = stderrBuf
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Env = r.envVars
+	cmd.Env = c.envVars
 
 	err := cmd.Start()
 	if err != nil {
@@ -257,62 +278,53 @@ func (r *childProcess) RunOutOfBandTask(task string) error {
 		return fmt.Errorf("oob task failed: %w", err)
 	}
 
-	_, _ = stdoutBuf.WriteTo(r.consoleOutput.Stdout())
-	_, _ = stderrBuf.WriteTo(r.consoleOutput.Stderr())
+	_, _ = stdoutBuf.WriteTo(c.consoleOutput.Stdout())
+	_, _ = stderrBuf.WriteTo(c.consoleOutput.Stderr())
 
 	return nil
 }
 
-func (r *childProcess) startChild() {
-	if r.isExpectingShutdown.Load() {
-		log.Warn("child process already shutting down")
+func (c *childProcess) startChild() {
+	if c.getState() != processStateStopped {
 		return
 	}
-	r.isStarting.Store(true)
-	r.isStarted.Store(false)
-	r.childInnerRunWait.Add(1)
+	c.setState(processStateStarting)
+	c.childInnerRunWait.Add(1)
 	go func() {
-		defer r.childInnerRunWait.Done()
+		defer c.childInnerRunWait.Done()
 
-		r.dispatchStartupEvent()
+		c.dispatchStartupEvent()
 
 		log.Info("running prestart tasks")
-		err := r.executePrestart()
+		err := c.executePrestart()
 		if err != nil {
 			log.Errorf("running prestart: %+v", err)
 			return
 		}
 
-		ipcChannel := "gomon-" + uuid.New().String()
-		err = r.startIPCServer(ipcChannel)
-		if err != nil {
-			log.Errorf("starting ipc server: %+v", err)
-			return
-		}
-
-		if r.getChildCmd() != nil {
+		if c.getChildCmd() != nil {
 			log.Warn("child process already running")
 			return
 		}
 
-		log.Infof("spawning 'go run %s'", r.entrypoint)
+		log.Infof("spawning 'go run %s'", c.entrypoint)
 
-		args := []string{"run", r.entrypoint}
-		if len(r.entrypointArgs) > 0 {
-			args = append(args, r.entrypointArgs...)
+		args := []string{"run", c.entrypoint}
+		if len(c.entrypointArgs) > 0 {
+			args = append(args, c.entrypointArgs...)
 		}
 
-		envVars := []string{fmt.Sprintf("GOMON_IPC_CHANNEL=%s", ipcChannel)}
-		envVars = append(envVars, r.envVars...)
+		envVars := []string{fmt.Sprintf("GOMON_IPC_CHANNEL=%s", c.ipcChannel)}
+		envVars = append(envVars, c.envVars...)
 
 		cmd := exec.Command("go", args...)
-		cmd.Dir = r.rootDirectory
-		cmd.Stdout = r.consoleOutput.Stdout()
-		cmd.Stderr = r.consoleOutput.Stderr()
+		cmd.Dir = c.rootDirectory
+		cmd.Stdout = c.consoleOutput.Stdout()
+		cmd.Stderr = c.consoleOutput.Stderr()
 		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 		cmd.Env = envVars
 
-		r.setChildCmd(cmd)
+		c.setChildCmd(cmd)
 
 		err = cmd.Start()
 		if err != nil {
@@ -320,7 +332,7 @@ func (r *childProcess) startChild() {
 			return
 		}
 
-		r.isStarting.Store(false)
+		c.setState(processStateStarted)
 
 		err = cmd.Wait()
 		if err != nil && !(err.Error() != "signal: terminated" || err.Error() != "signal: killed") {
@@ -332,27 +344,29 @@ func (r *childProcess) startChild() {
 			log.Warnf("child process exited with non-zero status: %d", cmd.ProcessState.ExitCode())
 		}
 
-		r.notifyEventSinks(notif.Notification{Type: notif.NotificationTypeShutdown})
-		r.setChildCmd(nil)
+		c.notifyEventSinks(notif.Notification{Type: notif.NotificationTypeShutdown})
+		c.setChildCmd(nil)
 
-		if !r.isExpectingShutdown.Load() {
+		if c.getState() != processStateStopping {
+			c.setState(processStateStopped)
 			log.Warn("child process exited unexpectedly, restarting")
-			if r.backoff > maxBackoff {
+			if c.backoff > maxBackoff {
 				log.Warn("child process restarted too many times, max backoff reached")
-				r.backoff = maxBackoff
+				c.backoff = maxBackoff
 			}
-			time.Sleep(r.backoff)
-			r.startChild()
-			r.backoff *= 2
+			time.Sleep(c.backoff)
+			c.startChild()
+			c.backoff *= 2
 		} else {
-			r.childOuterRunWait.Done()
+			c.setState(processStateStopped)
+			c.childOuterRunWait.Done()
 		}
 	}()
 }
 
-func (r *childProcess) dispatchStartupEvent() {
+func (c *childProcess) dispatchStartupEvent() {
 	runDate := time.Now()
-	res, err := r.db.Exec("INSERT INTO runs (created_at) VALUES ($1)", runDate)
+	res, err := c.db.Exec("INSERT INTO runs (created_at) VALUES ($1)", runDate)
 	if err != nil {
 		log.Errorf("inserting run: %v", err)
 	}
@@ -360,31 +374,46 @@ func (r *childProcess) dispatchStartupEvent() {
 	if err != nil {
 		log.Errorf("getting last insert id: %v", err)
 	}
-	r.currentRunID.Store(runID)
+	c.currentRunID.Store(runID)
 
 	run := &console.LogRun{
 		ID:        int(runID),
 		CreatedAt: runDate,
 	}
 
-	r.notifyEventSinks(notif.Notification{
+	c.notifyEventSinks(notif.Notification{
 		Type:     notif.NotificationTypeStartup,
 		Metadata: run,
 	})
 }
 
-func (r *childProcess) closeChild() error {
-	r.isExpectingShutdown.Store(true)
+func (c *childProcess) closeChild() error {
+	if c.getState() != processStateStarted {
+		return nil
+	}
 
-	cmd := r.getChildCmd()
+	c.setState(processStateStopping)
+
+	cmd := c.getChildCmd()
 	if cmd == nil {
+		c.setState(processStateStopped)
 		return nil
 	}
 
 	if cmd.Process == nil {
+		c.setState(processStateStopped)
 		return nil
 	}
+
 	log.Info("terminating child process")
+	c.ipcServerLock.Lock()
+	defer c.ipcServerLock.Unlock()
+	if c.ipcServer != nil {
+		err := c.ipcServer.Write(gomonclient.MsgTypeShutdown, nil)
+		if err != nil {
+			log.Errorf("ipc write: %+v", err)
+		}
+	}
 
 	// calling syscall.Kill with a negative pid sends the signal to the entire process group
 	// including the child process and any of its children
@@ -394,10 +423,10 @@ func (r *childProcess) closeChild() error {
 	}
 
 	select {
-	case <-r.childCmdClosed:
+	case <-c.childCmdClosed:
 		log.Info("child process closed")
-	case <-time.After(r.killTimeout):
-		cmd = r.getChildCmd()
+	case <-time.After(c.killTimeout):
+		cmd = c.getChildCmd()
 		if cmd != nil {
 			log.Warn("child process did not shut down gracefully, killing it")
 			err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
@@ -410,9 +439,9 @@ func (r *childProcess) closeChild() error {
 	return nil
 }
 
-func (r *childProcess) executePrestart() error {
-	for _, task := range r.prestart {
-		err := r.RunOutOfBandTask(task)
+func (c *childProcess) executePrestart() error {
+	for _, task := range c.prestart {
+		err := c.RunOutOfBandTask(task)
 		if err != nil {
 			return fmt.Errorf("running prestart task: %w", err)
 		}
@@ -421,42 +450,48 @@ func (r *childProcess) executePrestart() error {
 	return nil
 }
 
-func (r *childProcess) notifyEventSinks(n notif.Notification) {
-	for _, listener := range r.eventSinks {
+func (c *childProcess) notifyEventSinks(n notif.Notification) {
+	for _, listener := range c.eventSinks {
 		listener.Notify(n)
 	}
 }
 
-func (r *childProcess) startIPCServer(ipcChannel string) error {
+func (c *childProcess) startIPCServer() error {
+	c.ipcServerLock.Lock()
+	defer c.ipcServerLock.Unlock()
+
 	var err error
-	r.ipcServer, err = ipc.StartServer(ipcChannel, nil)
+	c.ipcServer, err = ipc.StartServer(c.ipcChannel, nil)
 	if err != nil {
 		return fmt.Errorf("ipc server: %w", err)
 	}
 
 	go func() {
 		for {
-			msg, err := r.ipcServer.Read()
+			if c.ipcServer.StatusCode() == ipc.Closed {
+				break
+			}
+
+			msg, err := c.ipcServer.Read()
 			if err != nil {
 				log.Errorf("ipc read: %+v", err)
 				continue
 			}
 
 			switch msg.MsgType {
+			case gomonclient.MsgTypeStartup:
+				log.Info("Received startup message from downstream process")
+				c.notifyEventSinks(notif.Notification{Type: notif.NotificationTypeHardRestart})
+
 			case gomonclient.MsgTypeReloaded:
 				log.Info("Received reload message from downstream process")
-				r.notifyEventSinks(notif.Notification{Type: notif.NotificationTypeSoftRestart, Message: string(msg.Data)})
+				c.notifyEventSinks(notif.Notification{Type: notif.NotificationTypeSoftRestart, Message: string(msg.Data)})
 
 			case gomonclient.MsgTypePing:
-				err := r.ipcServer.Write(gomonclient.MsgTypePong, nil)
+				err := c.ipcServer.Write(gomonclient.MsgTypePong, nil)
 				if err != nil {
 					log.Errorf("ipc write: %+v", err)
 				}
-
-			case gomonclient.MsgTypeStartup:
-				log.Info("Received startup message from downstream process")
-				r.isStarted.Store(true)
-				r.notifyEventSinks(notif.Notification{Type: notif.NotificationTypeHardRestart})
 
 			case gomonclient.MsgTypeInternal:
 				log.Debugf("Internal message received: %+v", msg)
@@ -474,7 +509,7 @@ func (r *childProcess) startIPCServer(ipcChannel string) error {
 	return nil
 }
 
-func (r *childProcess) loadEnvFile(filename string) error {
+func (c *childProcess) loadEnvFile(filename string) error {
 	if _, err := os.Stat(filename); os.IsNotExist(err) {
 		log.Warnf("env file %s does not exist", filename)
 		return nil
@@ -492,7 +527,7 @@ func (r *childProcess) loadEnvFile(filename string) error {
 		if strings.HasPrefix(line, "#") || len(line) == 0 {
 			continue
 		}
-		r.envVars = append(r.envVars, line)
+		c.envVars = append(c.envVars, line)
 	}
 
 	if err := scanner.Err(); err != nil {
@@ -502,14 +537,22 @@ func (r *childProcess) loadEnvFile(filename string) error {
 	return nil
 }
 
-func (r *childProcess) getChildCmd() *exec.Cmd {
-	if cmd, ok := r.childCmd.Load().(*exec.Cmd); !ok {
+func (c *childProcess) getChildCmd() *exec.Cmd {
+	if cmd, ok := c.childCmd.Load().(*exec.Cmd); !ok {
 		return nil
 	} else {
 		return cmd
 	}
 }
 
-func (r *childProcess) setChildCmd(cmd *exec.Cmd) {
-	r.childCmd.Store(cmd)
+func (c *childProcess) setChildCmd(cmd *exec.Cmd) {
+	c.childCmd.Store(cmd)
+}
+
+func (c *childProcess) setState(state processState) {
+	c.state.Store(int64(state))
+}
+
+func (c *childProcess) getState() processState {
+	return processState(c.state.Load())
 }
