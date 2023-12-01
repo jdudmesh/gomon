@@ -80,7 +80,6 @@ type childProcess struct {
 	childCmdClosed    chan bool
 	consoleOutput     consoleOutput
 	ipcServer         *ipc.Server
-	ipcChannel        string
 	ipcServerLock     sync.Mutex
 	eventSinks        []notif.NotificationSink
 	killTimeout       time.Duration // TODO: make configurable
@@ -113,7 +112,6 @@ func New(cfg *config.Config, db *sqlx.DB, opts ...ChildProcessOption) (*childPro
 		currentRunID:      atomic.Int64{},
 		childInnerRunWait: sync.WaitGroup{},
 		childOuterRunWait: sync.WaitGroup{},
-		ipcChannel:        "gomon-" + uuid.New().String(),
 		ipcServerLock:     sync.Mutex{},
 		childCmdClosed:    make(chan bool, 1),
 		eventSinks:        []notif.NotificationSink{},
@@ -142,11 +140,6 @@ func New(cfg *config.Config, db *sqlx.DB, opts ...ChildProcessOption) (*childPro
 }
 
 func (c *childProcess) Start() error {
-	err := c.startIPCServer()
-	if err != nil {
-		return fmt.Errorf("starting ipc server: %w", err)
-	}
-
 	log.Debug("starting child process")
 	c.backoff = initialBackoff
 	c.childOuterRunWait.Add(1)
@@ -164,14 +157,6 @@ func (c *childProcess) Close() error {
 	err := c.closeChild()
 	if err != nil {
 		return fmt.Errorf("terminating child process: %w", err)
-	}
-
-	c.ipcServerLock.Lock()
-	defer c.ipcServerLock.Unlock()
-	if c.ipcServer != nil {
-		log.Info("closing IPC server")
-		c.ipcServer.Close()
-		c.ipcServer = nil
 	}
 
 	return nil
@@ -307,6 +292,11 @@ func (c *childProcess) startChild() {
 			return
 		}
 
+		ipcChannel, err := c.startIPCServer()
+		if err != nil {
+			log.Errorf("starting ipc server: %v", err)
+		}
+
 		log.Infof("spawning 'go run %s'", c.entrypoint)
 
 		args := []string{"run", c.entrypoint}
@@ -314,7 +304,7 @@ func (c *childProcess) startChild() {
 			args = append(args, c.entrypointArgs...)
 		}
 
-		envVars := []string{fmt.Sprintf("GOMON_IPC_CHANNEL=%s", c.ipcChannel)}
+		envVars := []string{fmt.Sprintf("GOMON_IPC_CHANNEL=%s", ipcChannel)}
 		envVars = append(envVars, c.envVars...)
 
 		cmd := exec.Command("go", args...)
@@ -406,14 +396,7 @@ func (c *childProcess) closeChild() error {
 	}
 
 	log.Info("terminating child process")
-	c.ipcServerLock.Lock()
-	defer c.ipcServerLock.Unlock()
-	if c.ipcServer != nil {
-		err := c.ipcServer.Write(gomonclient.MsgTypeShutdown, nil)
-		if err != nil {
-			log.Errorf("ipc write: %+v", err)
-		}
-	}
+	c.closeIPCServer()
 
 	// calling syscall.Kill with a negative pid sends the signal to the entire process group
 	// including the child process and any of its children
@@ -456,14 +439,17 @@ func (c *childProcess) notifyEventSinks(n notif.Notification) {
 	}
 }
 
-func (c *childProcess) startIPCServer() error {
+func (c *childProcess) startIPCServer() (string, error) {
+	err := (error)(nil)
+
 	c.ipcServerLock.Lock()
 	defer c.ipcServerLock.Unlock()
 
-	var err error
-	c.ipcServer, err = ipc.StartServer(c.ipcChannel, nil)
+	ipcChannel := "gomon-" + uuid.New().String()
+
+	c.ipcServer, err = ipc.StartServer(ipcChannel, nil)
 	if err != nil {
-		return fmt.Errorf("ipc server: %w", err)
+		return "", fmt.Errorf("ipc server: %w", err)
 	}
 
 	go func() {
@@ -506,7 +492,22 @@ func (c *childProcess) startIPCServer() error {
 		}
 	}()
 
-	return nil
+	return ipcChannel, nil
+}
+
+func (c *childProcess) closeIPCServer() {
+	c.ipcServerLock.Lock()
+	defer c.ipcServerLock.Unlock()
+
+	err := c.ipcServer.Write(gomonclient.MsgTypeShutdown, nil)
+	if err != nil {
+		log.Errorf("ipc write: %+v", err)
+	}
+
+	if c.ipcServer != nil {
+		c.ipcServer.Close()
+		c.ipcServer = nil
+	}
 }
 
 func (c *childProcess) loadEnvFile(filename string) error {
