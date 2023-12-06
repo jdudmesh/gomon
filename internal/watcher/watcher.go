@@ -19,6 +19,7 @@ package watcher
 import (
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -207,6 +208,17 @@ func (w *filesystemWatcher) watchTree() error {
 			return err
 		}
 		if f.IsDir() {
+			isExcluded := false
+			for _, exclude := range w.excludePaths {
+				p := path.Join(w.Config.RootDirectory, exclude)
+				if srcPath == p {
+					isExcluded = true
+					break
+				}
+			}
+			if isExcluded {
+				return filepath.SkipDir
+			}
 			return w.watcher.Add(srcPath)
 		}
 		return nil
