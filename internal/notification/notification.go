@@ -5,6 +5,8 @@ type NotificationChannel chan Notification
 
 const (
 	NotificationTypeSystemError NotificationType = iota
+	NotificationTypeSoftRestartRequested
+	NotificationTypeHardRestartRequested
 	NotificationTypeSystemShutdown
 	NotificationTypeStartup
 	NotificationTypeHardRestart

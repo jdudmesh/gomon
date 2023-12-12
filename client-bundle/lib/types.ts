@@ -1,88 +1,93 @@
 import { type UnwrapNestedRefs } from "@vue/reactivity";
 
 export type RequestConfig = {
-  url: string
-  cancel: boolean
-  contentType: string
-} & RequestInit
+  url: string;
+  cancel: boolean;
+  contentType: string;
+} & RequestInit;
 
-export type RequestConfigFn = (config: RequestConfig) => Promise<void> | void
-export type PostRequestFn = (res: Response) => Promise<boolean> | boolean
+export type RequestConfigFn = (config: RequestConfig) => Promise<void> | void;
+export type PostRequestFn = (res: Response) => Promise<boolean> | boolean;
 
 export type ActorContext = {
-  sourceSelector: string
-  targetSelector: string | null
-  triggerEvent: string | null
-  trigger: TriggerHandlerFn
-  actor: ActorHandlerFn | null
-  swapper: ResponseHandlerFn | null
-  beforeActor: RequestConfigFn | null
-  afterActor: PostRequestFn | null
+  sourceSelector: string;
+  targetSelector: string | null;
+  triggerEvent: string | null;
+  trigger: TriggerHandlerFn;
+  actor: ActorHandlerFn | null;
+  swapper: ResponseHandlerFn | null;
+  beforeActor: RequestConfigFn | null;
+  afterActor: PostRequestFn | null;
 };
 
 export type BindingEntry = {
-  field: string
-  selector: string
-  events: string[]
-  element: HTMLElement
-  handler: EventHandler
-}
+  field: string;
+  selector: string;
+  events: string[];
+  element: HTMLElement;
+  handler: EventHandler;
+};
 
 export type StateContext<T> = {
-  state: UnwrapNestedRefs<T>
-  bindings: Record<keyof T, BindingEntry>
-}
+  state: UnwrapNestedRefs<T>;
+  bindings: Record<keyof T, BindingEntry>;
+};
 
 export interface Base {
-  baseUrl: (url: string) => Base
-  sse: (url: string, options: any) => SSE
+  baseUrl: (url: string) => Base;
+  sse: (url: string, options: any) => SSE;
 }
 
 export interface SSE {
-  pause: (isPaused: boolean) => SSE
-  clear: () => void
-  close: () => void
+  onError: (handler: (ev: Event) => void) => SSE;
+  pause: (isPaused: boolean) => SSE;
+  clear: () => void;
+  close: () => void;
 }
 
 export interface Swapper {
-  swap: (swapAction: string) => RetriggerableActor
+  swap: (swapAction: string) => RetriggerableActor;
 }
 
-export type SwappableTarget = Target & Swapper & Retrigger
+export type SwappableTarget = Target & Swapper & Retrigger;
 
 export interface Target {
-  target: (selector: string) => Swapper & Retrigger
-  before: (fn: RequestConfigFn) => SwappableTarget
-  after: (fn: PostRequestFn) => SwappableTarget
+  target: (selector: string) => Swapper & Retrigger;
+  before: (fn: RequestConfigFn) => SwappableTarget;
+  after: (fn: PostRequestFn) => SwappableTarget;
 }
 
 export interface Actor {
-  get: (url: Path) => SwappableTarget
-  post: (url: Path) => SwappableTarget
+  get: (url: Path) => SwappableTarget;
+  post: (url: Path) => SwappableTarget;
 }
 
 export interface Retrigger {
-  retrigger: () => void
+  retrigger: () => void;
 }
 
-export type RetriggerableActor = Actor & Retrigger
+export type RetriggerableActor = Actor & Retrigger;
 
 export interface Trigger {
-  on: (event: string) => RetriggerableActor
+  on: (event: string) => RetriggerableActor;
 }
 
 export interface State<T> {
-  watch: (field: keyof T, handler: (state: any, prev: any) => void|Promise<void>) => Model<T> & State<T>
-  bind: (field: keyof T, selector: string) => Model<T> & State<T>
+  watch: (
+    field: keyof T,
+    handler: (state: any, prev: any) => void | Promise<void>
+  ) => Model<T> & State<T>;
+  bind: (field: keyof T, selector: string) => Model<T> & State<T>;
 }
 
 export interface Model<T> {
-  model: UnwrapNestedRefs<T>
+  model: UnwrapNestedRefs<T>;
 }
 
 export type SSEEventSource = {
   source: EventSource;
-  handler: EventHandler|undefined;
+  messageHandler: EventHandler | undefined;
+  errorHandler: EventHandler | undefined;
   isPaused: boolean;
   queue: MessageEvent[];
 };

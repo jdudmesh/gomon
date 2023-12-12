@@ -1,24 +1,54 @@
 // import { watch, watchEffect } from "@vue-reactivity/watch";
 import { watch } from "@vue-reactivity/watch";
 import { reactive, type UnwrapNestedRefs } from "@vue/reactivity";
-import type { ActorRegistry, StateRegistry, BindingEntry, SSEEventSource, EventHandler, KiloDef, SwapType, Path, RequestConfig, RequestConfigFn, PostRequestFn, ActorContext, StateContext, Base, SSE, Swapper, Target, Actor, Trigger, State, Model, RetriggerableActor, Retrigger, SwappableTarget } from "./types";
+import type {
+  ActorRegistry,
+  StateRegistry,
+  BindingEntry,
+  SSEEventSource,
+  EventHandler,
+  KiloDef,
+  SwapType,
+  Path,
+  RequestConfig,
+  RequestConfigFn,
+  PostRequestFn,
+  ActorContext,
+  StateContext,
+  Base,
+  SSE,
+  Swapper,
+  Target,
+  Actor,
+  Trigger,
+  State,
+  Model,
+  RetriggerableActor,
+  Retrigger,
+  SwappableTarget
+} from "./types";
 
 let baseUrl = "";
 
 const actorRegistry = reactive({
   state: "loading",
   contexts: [],
-  sseSources: [],
+  sseSources: []
 } as ActorRegistry);
 
 const stateRegistry: StateRegistry = {
-  contexts: [],
+  contexts: []
 };
 
 watch(
   () => actorRegistry.contexts,
   (contexts, prev) => {
-    if (!(actorRegistry.state === "interactive" || actorRegistry.state === "complete")) {
+    if (
+      !(
+        actorRegistry.state === "interactive" ||
+        actorRegistry.state === "complete"
+      )
+    ) {
       return;
     }
     for (const ctx of contexts) {
@@ -34,21 +64,24 @@ watch(
 );
 
 const stateBindingObserver = new MutationObserver((mutations) => {
-  for(const m of mutations) {
-    for(const removed of m.removedNodes) {
-      if(removed.nodeType !== Node.ELEMENT_NODE) {
-        continue
+  for (const m of mutations) {
+    for (const removed of m.removedNodes) {
+      if (removed.nodeType !== Node.ELEMENT_NODE) {
+        continue;
       }
-      const el = removed as HTMLElement
-      for(const ctx of stateRegistry.contexts) {
-        if(ctx.bindings) {
-          for(const key in ctx.bindings) {
-            if(ctx.bindings[key].element === el) {
-              for(const event of ctx.bindings[key].events) {
-                ctx.bindings[key].element.removeEventListener("change", ctx.bindings[key].handler)
+      const el = removed as HTMLElement;
+      for (const ctx of stateRegistry.contexts) {
+        if (ctx.bindings) {
+          for (const key in ctx.bindings) {
+            if (ctx.bindings[key].element === el) {
+              for (const event of ctx.bindings[key].events) {
+                ctx.bindings[key].element.removeEventListener(
+                  "change",
+                  ctx.bindings[key].handler
+                );
               }
-              const fn = _binder(ctx)
-              fn(key, ctx.bindings[key].selector)
+              const fn = _binder(ctx);
+              fn(key, ctx.bindings[key].selector);
             }
           }
         }
@@ -59,10 +92,13 @@ const stateBindingObserver = new MutationObserver((mutations) => {
 
 document.addEventListener("readystatechange", (ev: Event) => {
   actorRegistry.state = document.readyState;
-  if (document.readyState === "interactive" || actorRegistry.state === "complete") {
+  if (
+    document.readyState === "interactive" ||
+    actorRegistry.state === "complete"
+  ) {
     stateBindingObserver.observe(document.body, {
       childList: true,
-      subtree: true,
+      subtree: true
     });
 
     for (const ctx of actorRegistry.contexts) {
@@ -72,45 +108,51 @@ document.addEventListener("readystatechange", (ev: Event) => {
       }
       src.dispatchEvent(new CustomEvent("kilo:load"));
     }
-    for(const src of actorRegistry.sseSources) {
-      if(!src.handler) {
-        continue
+    for (const src of actorRegistry.sseSources) {
+      if (!src.messageHandler) {
+        continue;
       }
-      src.source.addEventListener("message", src.handler);
+      src.source.addEventListener("message", src.messageHandler);
     }
   }
 });
 
-function defaultSSEEventHandler(src: SSEEventSource) : EventHandler {
+function defaultSSEEventHandler(src: SSEEventSource): EventHandler {
   return (ev: Event) => {
     try {
       const e = ev as MessageEvent;
-      if(src.isPaused) {
+      if (src.isPaused) {
         src.queue.push(e);
         return;
       }
       const msg = JSON.parse(e.data) as KiloDef;
-      const target = document.querySelector(msg["x-kilo-target"]) as HTMLElement;
+      const target = document.querySelector(
+        msg["x-kilo-target"]
+      ) as HTMLElement;
       const swap = msg["x-kilo-swap"];
       const markup = msg["x-kilo-markup"];
       if (!target) {
         throw new Error("Target element not found");
       }
-      _swap({
-        sourceSelector: msg["x-kilo-target"],
-        targetSelector: msg["x-kilo-target"],
-        triggerEvent: null,
-        trigger: async () => {},
-        actor: null,
-        swapper: null,
-        beforeActor: null,
-        afterActor: null,
-      }, swap, markup);
-    } catch(e) {
+      _swap(
+        {
+          sourceSelector: msg["x-kilo-target"],
+          targetSelector: msg["x-kilo-target"],
+          triggerEvent: null,
+          trigger: async () => {},
+          actor: null,
+          swapper: null,
+          beforeActor: null,
+          afterActor: null
+        },
+        swap,
+        markup
+      );
+    } catch (e) {
       console.error(e);
       console.error(ev);
     }
-  }
+  };
 }
 
 async function _swap(ctx: ActorContext, swapExpr: string, markup: string) {
@@ -158,33 +200,40 @@ async function _swap(ctx: ActorContext, swapExpr: string, markup: string) {
       break;
   }
 
-  if(scrollExpr) {
+  if (scrollExpr) {
     const f = scrollExpr.split(":");
     const scrollType = f[0];
     const scrollTarget = f[1];
-    switch(scrollType) {
+    switch (scrollType) {
       case "scroll":
-        switch(scrollTarget) {
+        switch (scrollTarget) {
           case "view":
             (documentFragment.firstChild as HTMLElement)?.scrollIntoView();
             break;
           case "lastchild":
-            (target.lastChild as HTMLElement)?.scrollIntoView({block: "end", behavior: "instant"});
+            (target.lastChild as HTMLElement)?.scrollIntoView({
+              block: "end",
+              behavior: "instant"
+            });
             break;
           case "nextsibling":
-            (target.nextSibling as HTMLElement)?.scrollIntoView({block: "end", behavior: "instant"});
+            (target.nextSibling as HTMLElement)?.scrollIntoView({
+              block: "end",
+              behavior: "instant"
+            });
             break;
         }
         break;
     }
   }
-};
+}
 
-function extractFormData(form: HTMLFormElement, config : RequestConfig) {
+function extractFormData(form: HTMLFormElement, config: RequestConfig) {
   const formData = new FormData(form);
-  switch(config.method) {
+  switch (config.method) {
     case "GET":
-      config.url = config.url + "?" + new URLSearchParams(formData as any).toString();
+      config.url =
+        config.url + "?" + new URLSearchParams(formData as any).toString();
       break;
     case "POST":
       // TODO: support other content types (multipart/form-data, application/json, etc.)
@@ -201,27 +250,27 @@ async function _doRequest(ctx: ActorContext, url: Path, method: string) {
 
   const requestUrl = typeof url === "string" ? url : url(ctx);
   const params = new FormData();
-  const config : RequestConfig = {
+  const config: RequestConfig = {
     url: baseUrl + requestUrl,
     contentType: "",
     cancel: false,
-    method: method,
-  }
+    method: method
+  };
 
-  if(src.tagName === "FORM") {
+  if (src.tagName === "FORM") {
     extractFormData(src as HTMLFormElement, config);
   }
 
-  if(ctx.beforeActor) {
-    await ctx.beforeActor(config)
-    if(config.cancel) return
+  if (ctx.beforeActor) {
+    await ctx.beforeActor(config);
+    if (config.cancel) return;
   }
 
   const res = await fetch(config.url, config);
 
-  if(ctx.afterActor) {
-    const ok = await ctx.afterActor(res)
-    if(!ok) return
+  if (ctx.afterActor) {
+    const ok = await ctx.afterActor(res);
+    if (!ok) return;
   }
 
   if (ctx.swapper) {
@@ -230,7 +279,7 @@ async function _doRequest(ctx: ActorContext, url: Path, method: string) {
 
   const markup = await res.text();
   return _swap(ctx, "innerHTML", markup);
-};
+}
 
 function _swapper(ctx: ActorContext): Swapper & Retrigger {
   return {
@@ -241,30 +290,30 @@ function _swapper(ctx: ActorContext): Swapper & Retrigger {
       };
       return {
         ..._actor(ctx)
-      }
+      };
     },
-    ... _retrigger(ctx),
+    ..._retrigger(ctx)
   };
-};
+}
 
 function _target(ctx: ActorContext): SwappableTarget {
   return {
     target: (selector: string) => {
       ctx.targetSelector = selector;
-      return _swapper(ctx)
+      return _swapper(ctx);
     },
     before: (fn: RequestConfigFn): SwappableTarget => {
-      ctx.beforeActor = fn
-      return _target(ctx)
+      ctx.beforeActor = fn;
+      return _target(ctx);
     },
-    after: (fn: PostRequestFn) : SwappableTarget => {
-      ctx.afterActor = fn
-      return _target(ctx)
+    after: (fn: PostRequestFn): SwappableTarget => {
+      ctx.afterActor = fn;
+      return _target(ctx);
     },
     ..._swapper(ctx),
     ..._retrigger(ctx)
   };
-};
+}
 
 function _retrigger(ctx: ActorContext): Retrigger {
   return {
@@ -274,7 +323,7 @@ function _retrigger(ctx: ActorContext): Retrigger {
       }
       ctx.actor(null);
     }
-  }
+  };
 }
 
 function _actor(ctx: ActorContext): RetriggerableActor {
@@ -304,7 +353,7 @@ function _actor(ctx: ActorContext): RetriggerableActor {
       };
       return {
         ..._target(ctx),
-        ..._retrigger(ctx),
+        ..._retrigger(ctx)
       };
     },
     post: (url: Path) => {
@@ -314,32 +363,36 @@ function _actor(ctx: ActorContext): RetriggerableActor {
       };
       return {
         ..._target(ctx),
-        ..._retrigger(ctx),
+        ..._retrigger(ctx)
       };
     },
-    ..._retrigger(ctx),
+    ..._retrigger(ctx)
   };
-};
+}
 
 function _trigger(ctx: ActorContext): Trigger {
   return {
     on: (event: string) => {
       ctx.triggerEvent = event;
-      return _actor(ctx)
-    },
+      return _actor(ctx);
+    }
   };
-};
+}
 
 function _sse(src: SSEEventSource): SSE {
   return {
+    onError: (handler: (ev: Event) => void) => {
+      src.errorHandler = handler;
+      return _sse(src);
+    },
     pause: (isPaused: boolean) => {
       src.isPaused = isPaused;
-      if(!src.handler) return _sse(src);
-      if(!src.isPaused) {
-        while(src.queue.length > 0) {
+      if (!src.messageHandler) return _sse(src);
+      if (!src.isPaused) {
+        while (src.queue.length > 0) {
           const ev = src.queue.shift();
-          if(!ev) continue;
-          src.handler(ev);
+          if (!ev) continue;
+          src.messageHandler(ev);
         }
         src.queue = [];
       }
@@ -350,8 +403,10 @@ function _sse(src: SSEEventSource): SSE {
     },
     close: () => {
       src.source.close();
-      actorRegistry.sseSources = actorRegistry.sseSources.filter(s => s !== src);
-    },
+      actorRegistry.sseSources = actorRegistry.sseSources.filter(
+        (s) => s !== src
+      );
+    }
   };
 }
 
@@ -361,20 +416,26 @@ function _base(): Base {
       baseUrl = url;
       return {
         ..._base()
-      }
+      };
     },
     sse: (url: string, options: any): SSE => {
       const opts = {
         withCredentials: true,
-        ...options,
+        ...options
       };
       const src: SSEEventSource = {
         source: new EventSource(baseUrl + url, opts),
         isPaused: false,
-        handler: undefined,
-        queue: [],
+        messageHandler: undefined,
+        errorHandler: undefined,
+        queue: []
       };
-      src.handler =  defaultSSEEventHandler(src)
+      src.messageHandler = defaultSSEEventHandler(src);
+      src.source.onerror = (ev: Event) => {
+        if (src.errorHandler) {
+          src.errorHandler(ev);
+        }
+      };
       actorRegistry.sseSources.push(src);
       return _sse(src);
     }
@@ -384,46 +445,52 @@ function _base(): Base {
 function _binder<T>(ctx: StateContext<T>) {
   return (field: keyof T, selector: string) => {
     const el = document.querySelector(selector) as HTMLElement;
-    if(!el) {
+    if (!el) {
       throw new Error("Element not found");
     }
     const handler = (ev: Event) => {
       const tgt = ev.target as HTMLElement;
-      switch(tgt.tagName) {
+      switch (tgt.tagName) {
         case "INPUT":
           const input = tgt as HTMLInputElement;
-          switch(input.type) {
+          switch (input.type) {
             case "checkbox":
-              ctx.state[field as keyof UnwrapNestedRefs<T>] = input.checked as any;
+              ctx.state[field as keyof UnwrapNestedRefs<T>] =
+                input.checked as any;
               break;
             default:
-              ctx.state[field as keyof UnwrapNestedRefs<T>] = input.value as any;
+              ctx.state[field as keyof UnwrapNestedRefs<T>] =
+                input.value as any;
               break;
           }
           break;
         case "SELECT":
-          ctx.state[field as keyof UnwrapNestedRefs<T>] = (tgt as HTMLSelectElement).value as any;
+          ctx.state[field as keyof UnwrapNestedRefs<T>] = (
+            tgt as HTMLSelectElement
+          ).value as any;
           break;
         case "TEXTAREA":
-          ctx.state[field as keyof UnwrapNestedRefs<T>] = (tgt as HTMLTextAreaElement).value as any;
+          ctx.state[field as keyof UnwrapNestedRefs<T>] = (
+            tgt as HTMLTextAreaElement
+          ).value as any;
           break;
       }
-    }
+    };
 
     const binding = {
       field: field as string,
       selector: selector,
       events: [] as string[],
       element: el,
-      handler: handler,
-    }
+      handler: handler
+    };
     binding.events.push("change");
     ctx.bindings[field] = binding;
 
-    switch(el.tagName) {
+    switch (el.tagName) {
       case "INPUT":
         const input = el as HTMLInputElement;
-        switch(input.type) {
+        switch (input.type) {
           case "text":
             binding.events.push("keyup");
             break;
@@ -436,33 +503,39 @@ function _binder<T>(ctx: StateContext<T>) {
         binding.events.push("keyup");
         break;
     }
-    for(const event of binding.events) {
+    for (const event of binding.events) {
       el.addEventListener(event, handler);
     }
     return {
-      ..._state(ctx),
-    }
-  }
+      ..._state(ctx)
+    };
+  };
 }
 function _state<T>(ctx: StateContext<T>): Model<T> & State<T> {
   return {
     model: ctx.state,
-    watch: (field: keyof T, handler: (state: any, prev: any) => void|Promise<void>) => {
-      watch(() => ctx.state[field as keyof UnwrapNestedRefs<T>], async (state: any, prev: any) => {
-        await handler(state, prev);
-      });
+    watch: (
+      field: keyof T,
+      handler: (state: any, prev: any) => void | Promise<void>
+    ) => {
+      watch(
+        () => ctx.state[field as keyof UnwrapNestedRefs<T>],
+        async (state: any, prev: any) => {
+          await handler(state, prev);
+        }
+      );
       return {
-        ..._state(ctx),
-      }
+        ..._state(ctx)
+      };
     },
-    bind: _binder(ctx),
-  }
+    bind: _binder(ctx)
+  };
 }
 
 export function actor(selector: string): Trigger & Actor {
   const src = document.querySelector(selector) as HTMLElement;
-  if(!src) {
-    throw new Error("source element not founf")
+  if (!src) {
+    throw new Error("source element not founf");
   }
 
   const ctx: ActorContext = {
@@ -478,30 +551,30 @@ export function actor(selector: string): Trigger & Actor {
     actor: null,
     swapper: null,
     beforeActor: null,
-    afterActor: null,
-};
+    afterActor: null
+  };
 
   actorRegistry.contexts.push(ctx);
 
   return {
     ..._trigger(ctx),
-    ..._actor(ctx),
-  }
+    ..._actor(ctx)
+  };
 }
 
 export function state<T>(initialState: T & object): Model<T> & State<T> {
   const ctx: StateContext<T> = {
     state: reactive(initialState),
-    bindings: {} as Record<keyof T, BindingEntry>,
-  }
+    bindings: {} as Record<keyof T, BindingEntry>
+  };
 
-  stateRegistry.contexts.push(ctx)
+  stateRegistry.contexts.push(ctx);
 
   return {
-    ..._state(ctx),
-  }
+    ..._state(ctx)
+  };
 }
 
 export function kilo<T>(): Base {
-  return _base()
+  return _base();
 }

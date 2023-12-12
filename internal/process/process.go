@@ -57,6 +57,7 @@ const (
 	processStateStarting
 	processStateStarted
 	processStateStopping
+	processStateClosing
 	processStateClosed
 )
 
@@ -141,11 +142,17 @@ func New(cfg *config.Config, db *sqlx.DB, opts ...ChildProcessOption) (*childPro
 
 func (c *childProcess) Start() error {
 	log.Debug("starting child process")
+
 	c.backoff = initialBackoff
 	c.childOuterRunWait.Add(1)
+
 	c.startChild()
+
 	c.childOuterRunWait.Wait()
 	c.childCmdClosed <- true
+
+	c.setState(processStateClosed)
+
 	return nil
 }
 
@@ -153,6 +160,8 @@ func (c *childProcess) Close() error {
 	if c.getState() == processStateClosed {
 		return nil
 	}
+
+	c.setState(processStateClosing)
 
 	err := c.closeChild()
 	if err != nil {
@@ -337,7 +346,8 @@ func (c *childProcess) startChild() {
 		c.notifyEventSinks(notif.Notification{Type: notif.NotificationTypeShutdown})
 		c.setChildCmd(nil)
 
-		if c.getState() != processStateStopping {
+		s := c.getState()
+		if !(s == processStateStopping || s == processStateClosing) {
 			c.setState(processStateStopped)
 			log.Warn("child process exited unexpectedly, restarting")
 			if c.backoff > maxBackoff {
@@ -378,7 +388,7 @@ func (c *childProcess) dispatchStartupEvent() {
 }
 
 func (c *childProcess) closeChild() error {
-	if c.getState() != processStateStarted {
+	if c.getState() == processStateStopped {
 		return nil
 	}
 
@@ -551,6 +561,11 @@ func (c *childProcess) setChildCmd(cmd *exec.Cmd) {
 }
 
 func (c *childProcess) setState(state processState) {
+	if processState(c.state.Load()) == processStateClosing {
+		if state != processStateClosed {
+			return
+		}
+	}
 	c.state.Store(int64(state))
 }
 

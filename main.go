@@ -196,18 +196,18 @@ func main() {
 			case notification.NotificationTypeSystemError:
 				log.Error(n.Metadata.(error))
 				fallthrough
-			case notification.NotificationTypeSystemShutdown:
-				childProcess.Close()
-			case notification.NotificationTypeHardRestart:
-				err = childProcess.HardRestart(n.Message)
-				if err != nil {
-					log.Fatalf("hard restarting child process: %v", err)
-				}
-			case notification.NotificationTypeSoftRestart:
+			case notification.NotificationTypeSoftRestartRequested:
 				err = childProcess.SoftRestart(n.Message)
 				if err != nil {
 					log.Fatalf("soft restarting child process: %v", err)
 				}
+			case notification.NotificationTypeHardRestartRequested:
+				err = childProcess.HardRestart(n.Message)
+				if err != nil {
+					log.Fatalf("hard restarting child process: %v", err)
+				}
+			case notification.NotificationTypeSystemShutdown:
+				childProcess.Close()
 			}
 		}
 	}()

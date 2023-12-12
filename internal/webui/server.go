@@ -92,6 +92,7 @@ func New(cfg *config.Config, gsc notif.NotificationChannel, db *sqlx.DB) (*serve
 	mux.HandleFunc("/dist/main.js", srv.clientBundleScriptHandler)
 	mux.HandleFunc("/dist/main.css", srv.clientBundleStylesheetHandler)
 	mux.Handle("/actions/restart", withCORS(http.HandlerFunc(srv.restartActionHandler)))
+	mux.Handle("/actions/exit", withCORS(http.HandlerFunc(srv.exitActionHandler)))
 	mux.Handle("/actions/search", withCORS(http.HandlerFunc(srv.searchActionHandler)))
 	mux.Handle("/components/search-select", withCORS(http.HandlerFunc(srv.searchSelectComponentHandler)))
 	mux.Handle("/sse", srv.sseServer)
@@ -238,7 +239,15 @@ func (c *server) sendRunEvent(ev *console.LogRun) error {
 
 func (c *server) restartActionHandler(w http.ResponseWriter, r *http.Request) {
 	c.globalSystemControl <- notif.Notification{
-		Type:    notif.NotificationTypeHardRestart,
+		Type:    notif.NotificationTypeHardRestartRequested,
+		Message: process.ForceHardRestart,
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+func (c *server) exitActionHandler(w http.ResponseWriter, r *http.Request) {
+	c.globalSystemControl <- notif.Notification{
+		Type:    notif.NotificationTypeSystemShutdown,
 		Message: process.ForceHardRestart,
 	}
 	w.WriteHeader(http.StatusOK)

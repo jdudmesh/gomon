@@ -12,7 +12,7 @@ build: bindir client
 
 install: client
 	@echo "Installing..."
-	@go --race install
+	@go install github.com/jdudmesh/gomon
 
 # Run the application
 run:
@@ -48,6 +48,6 @@ clean:
 
 client:
 	@echo "Building client..."
-	@cd client-bundle && pnpm run build
+	@cd client-bundle && pnpm i && pnpm run build
 
 .PHONY: all build run test clean

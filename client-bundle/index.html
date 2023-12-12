@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!doctype html>
 <html>
   <head>
     <title>gomon console</title>
@@ -21,22 +21,110 @@
     </style>
   </head>
   <body class="bg-slate-900 text-white flex flex-col h-screen">
-    <nav class="grow-0 flex flex-row p-4 justify-between items-center bg-blue-500">
+    <nav
+      class="grow-0 flex flex-row p-4 justify-between items-center bg-blue-500"
+    >
       <div class="flex flex-row">
-        <a href="https://github.com/jdudmesh/gomon" target="_blank" class="text-2xl text-bold">gomon</a>
+        <a
+          href="https://github.com/jdudmesh/gomon"
+          target="_blank"
+          class="text-2xl text-bold"
+          >gomon</a
+        >
       </div>
       <div class="flex flex-row gap-2">
         <form id="search-form" class="flex flex-row gap-2 text-slate-900">
-          <input id="search-input" name="q" type="text" class="input input-sm input-bordered w-96" placeholder="Search..." />
-          <select id="search-select" name="r" class="select select-sm select-bordered w-48"></select>
-          <button type="submit" class="btn btn-sm btn-secondary">Search</button>
+          <input
+            id="search-input"
+            name="q"
+            type="text"
+            class="input input-sm input-bordered w-96"
+            placeholder="Search..."
+          />
+          <select
+            id="search-select"
+            name="r"
+            class="select select-sm select-bordered w-48"
+          ></select>
+          <div class="tooltip tooltip-bottom" data-tip="Search">
+            <button type="submit" class="btn btn-sm btn-secondary">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke-width="1.5"
+                stroke="currentColor"
+                class="w-6 h-6"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z"
+                />
+              </svg>
+            </button>
+          </div>
         </form>
-        <button id="restart" class="btn btn-sm btn-primary">Restart</button>
+        <div class="tooltip tooltip-bottom" data-tip="Restart">
+          <button id="restart" class="btn btn-sm btn-primary text-white">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke-width="1.5"
+              stroke="currentColor"
+              class="w-6 h-6"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99"
+              />
+            </svg>
+          </button>
+        </div>
+        <div class="tooltip tooltip-bottom" data-tip="Exit">
+          <button id="exit" class="btn btn-sm btn-primary">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke-width="1.5"
+              stroke="currentColor"
+              class="w-6 h-6"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                d="M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15m3 0l3-3m0 0l-3-3m3 3H9"
+              />
+            </svg>
+          </button>
+        </div>
       </div>
     </nav>
     <main id="log-output" class="m-4 font-mono overflow-y-scroll">
       <div id="log-output-inner"></div>
       <div class="blinking-cursor" />
     </main>
+    <div id="connection-error" class="toast" style="display: none">
+      <div class="alert alert-error">
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke-width="1.5"
+          stroke="currentColor"
+          class="w-6 h-6"
+        >
+          <path
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z"
+          />
+        </svg>
+        <span>Not connected</span>
+      </div>
+    </div>
   </body>
 </html>
