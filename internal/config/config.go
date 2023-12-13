@@ -29,6 +29,7 @@ const DefaultConfigFileName = "gomon.config.yml"
 
 type Config struct {
 	RootDirectory  string              `yaml:"rootDirectory"`
+	Command        []string            `yaml:"command"`
 	Entrypoint     string              `yaml:"entrypoint"`
 	EntrypointArgs []string            `yaml:"entrypointArgs"`
 	EnvFiles       []string            `yaml:"envFiles"`

@@ -67,6 +67,7 @@ const maxBackoff = 5 * time.Second
 
 type childProcess struct {
 	rootDirectory     string
+	command           []string
 	entrypoint        string
 	envVars           []string
 	entrypointArgs    []string
@@ -105,6 +106,7 @@ func WithEventSink(sink notif.NotificationSink) ChildProcessOption {
 func New(cfg *config.Config, db *sqlx.DB, opts ...ChildProcessOption) (*childProcess, error) {
 	proc := &childProcess{
 		rootDirectory:     cfg.RootDirectory,
+		command:           cfg.Command,
 		entrypoint:        cfg.Entrypoint,
 		envVars:           os.Environ(),
 		entrypointArgs:    cfg.EntrypointArgs,
@@ -124,6 +126,10 @@ func New(cfg *config.Config, db *sqlx.DB, opts ...ChildProcessOption) (*childPro
 		if err != nil {
 			return nil, err
 		}
+	}
+
+	if len(proc.command) == 0 {
+		proc.command = []string{"go", "run"}
 	}
 
 	if proc.entrypoint == "" {
@@ -306,9 +312,10 @@ func (c *childProcess) startChild() {
 			log.Errorf("starting ipc server: %v", err)
 		}
 
-		log.Infof("spawning 'go run %s'", c.entrypoint)
+		log.Infof("spawning '%s %s'", strings.Join(c.command, " "), c.entrypoint)
 
-		args := []string{"run", c.entrypoint}
+		args := c.command[1:]
+		args = append(args, c.entrypoint)
 		if len(c.entrypointArgs) > 0 {
 			args = append(args, c.entrypointArgs...)
 		}
@@ -316,7 +323,7 @@ func (c *childProcess) startChild() {
 		envVars := []string{fmt.Sprintf("GOMON_IPC_CHANNEL=%s", ipcChannel)}
 		envVars = append(envVars, c.envVars...)
 
-		cmd := exec.Command("go", args...)
+		cmd := exec.Command(c.command[0], args...)
 		cmd.Dir = c.rootDirectory
 		cmd.Stdout = c.consoleOutput.Stdout()
 		cmd.Stderr = c.consoleOutput.Stderr()

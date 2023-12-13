@@ -9,6 +9,7 @@ For example usage see [this example](https://github.com/jdudmesh/gomon-example)
 ## Key features
 
 - `go run` a project and force hard restart based on file changes defined by a list of file extensions (typically `*.go`)
+- alternatively specify a different initial command
 - perform a soft restart (e.g. reload templates) based on a file changes defined by second list of file extensions (typically `*.html`)
 - ignore file changes in specified directories (e.g. `vendor`)
 - load environment variables from e.g. `.env` files
@@ -17,6 +18,10 @@ For example usage see [this example](https://github.com/jdudmesh/gomon-example)
 - Fire a page reload in the browser on hard or soft restart using SSE
 - Implements a Web UI which displays and can search console logs with history
 - prestart - run a list of tasks before running the main entrypoint e.g. `go generate`
+
+## UI Screenshot
+
+![UI Screenshot](https://github.com/jdudmesh/gomon/blob/main/screenshot/screenshot.png?raw=true)
 
 # Usage
 
@@ -61,7 +66,7 @@ If a config file is specified, or one is found in the working directory, then th
 The config file is a YAML file as follows:
 
 ````yaml
-
+command: <optional array for command to run instead of `["go", "run"]`>
 entrypoint:
 entrypointArgs:
 templatePathGlob: <relative path + glob to template directory>
