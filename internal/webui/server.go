@@ -64,7 +64,7 @@ func withCORS(next http.Handler) http.Handler {
 	})
 }
 
-func New(cfg *config.Config, gsc notif.NotificationChannel, db *sqlx.DB) (*server, error) {
+func New(cfg config.Config, gsc notif.NotificationChannel, db *sqlx.DB) (*server, error) {
 	srv := &server{
 		isEnabled:           cfg.UI.Enabled,
 		port:                cfg.UI.Port,

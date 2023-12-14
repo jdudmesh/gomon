@@ -58,34 +58,34 @@ var defaultConfig = Config{
 	ExcludePaths: []string{".gomon", "vendor"},
 }
 
-func New(configPath string) (*Config, error) {
+func New(configPath string) (Config, error) {
 	if configPath == "" {
-		return &defaultConfig, nil
+		return defaultConfig, nil
 	}
 
-	cfg := &Config{}
+	cfg := Config{}
 
 	if _, err := os.Stat(configPath); os.IsNotExist(err) {
 		log.Warn("could not find valid config file")
 		return cfg, nil
 	} else if err != nil {
-		return nil, fmt.Errorf("checking for config file: %w", err)
+		return defaultConfig, fmt.Errorf("checking for config file: %w", err)
 	}
 
 	log.Infof("loading config from %s", configPath)
 	f, err := os.Open(configPath)
 	if err != nil {
-		return nil, fmt.Errorf("opening config file: %w", err)
+		return defaultConfig, fmt.Errorf("opening config file: %w", err)
 	}
 	defer f.Close()
 
 	data, err := io.ReadAll(f)
 	if err != nil {
-		return nil, fmt.Errorf("reading config file: %w", err)
+		return defaultConfig, fmt.Errorf("reading config file: %w", err)
 	}
 
-	if err := yaml.Unmarshal(data, cfg); err != nil {
-		return nil, fmt.Errorf("unmarhsalling config: %w", err)
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return defaultConfig, fmt.Errorf("unmarhsalling config: %w", err)
 	}
 
 	if findIndex(cfg.ExcludePaths, ".gomon") < 0 {

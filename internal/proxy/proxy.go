@@ -60,7 +60,7 @@ type webProxy struct {
 	injectCode          string
 }
 
-func New(cfg *config.Config, gsc notif.NotificationChannel) (*webProxy, error) {
+func New(cfg config.Config, gsc notif.NotificationChannel) (*webProxy, error) {
 	proxy := &webProxy{
 		isEnabled:           cfg.Proxy.Enabled,
 		port:                cfg.Proxy.Port,

@@ -103,7 +103,7 @@ func WithEventSink(sink notif.NotificationSink) ChildProcessOption {
 	}
 }
 
-func New(cfg *config.Config, db *sqlx.DB, opts ...ChildProcessOption) (*childProcess, error) {
+func New(cfg config.Config, db *sqlx.DB, opts ...ChildProcessOption) (*childProcess, error) {
 	proc := &childProcess{
 		rootDirectory:     cfg.RootDirectory,
 		command:           cfg.Command,

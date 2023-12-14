@@ -59,7 +59,7 @@ type LogEvent struct {
 	CreatedAt time.Time `db:"created_at" json:"createdAt"`
 }
 
-func New(cfg *config.Config, gsc notif.NotificationChannel, db *sqlx.DB) (*streams, error) {
+func New(cfg config.Config, gsc notif.NotificationChannel, db *sqlx.DB) (*streams, error) {
 	stm := &streams{
 		enabled:             cfg.UI.Enabled,
 		db:                  db,

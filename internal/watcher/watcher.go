@@ -38,17 +38,25 @@ type ChildProcess interface {
 type HotReloaderOption func(*filesystemWatcher) error
 
 type filesystemWatcher struct {
-	config.Config
-	childProcess ChildProcess
-	excludePaths []string
-	watcher      *fsnotify.Watcher
+	rootDirectory string
+	hardReload    []string
+	softReload    []string
+	envFiles      []string
+	generated     map[string][]string
+	childProcess  ChildProcess
+	excludePaths  []string
+	watcher       *fsnotify.Watcher
 }
 
-func New(cfg *config.Config, childProcess ChildProcess, opts ...HotReloaderOption) (*filesystemWatcher, error) {
+func New(cfg config.Config, childProcess ChildProcess, opts ...HotReloaderOption) (*filesystemWatcher, error) {
 	reloader := &filesystemWatcher{
-		Config:       *cfg,
-		childProcess: childProcess,
-		excludePaths: []string{".git", ".vscode", ".idea"},
+		rootDirectory: cfg.RootDirectory,
+		hardReload:    cfg.HardReload,
+		softReload:    cfg.SoftReload,
+		envFiles:      cfg.EnvFiles,
+		generated:     cfg.Generated,
+		childProcess:  childProcess,
+		excludePaths:  []string{".git", ".vscode", ".idea"},
 	}
 
 	reloader.excludePaths = append(reloader.excludePaths, cfg.ExcludePaths...)
@@ -65,7 +73,7 @@ func New(cfg *config.Config, childProcess ChildProcess, opts ...HotReloaderOptio
 
 func (w *filesystemWatcher) Run() error {
 	var err error
-	log.Infof("starting gomon with root directory: %s", w.Config.RootDirectory)
+	log.Infof("starting gomon with root directory: %s", w.rootDirectory)
 
 	err = w.watch()
 	if err != nil {
@@ -123,7 +131,7 @@ func (w *filesystemWatcher) watch() error {
 
 func (w *filesystemWatcher) processFileChange(event fsnotify.Event) {
 	filePath, _ := filepath.Abs(event.Name)
-	relPath, err := filepath.Rel(w.Config.RootDirectory, filePath)
+	relPath, err := filepath.Rel(w.rootDirectory, filePath)
 	if err != nil {
 		log.Errorf("failed to get relative path for %s: %+v", filePath, err)
 		relPath = filePath
@@ -136,7 +144,7 @@ func (w *filesystemWatcher) processFileChange(event fsnotify.Event) {
 		}
 	}
 
-	for _, hard := range w.Config.HardReload {
+	for _, hard := range w.hardReload {
 		if match, _ := filepath.Match(hard, filepath.Base(filePath)); match {
 			err := w.childProcess.HardRestart(relPath)
 			if err != nil {
@@ -146,7 +154,7 @@ func (w *filesystemWatcher) processFileChange(event fsnotify.Event) {
 		}
 	}
 
-	for _, soft := range w.Config.SoftReload {
+	for _, soft := range w.softReload {
 		if match, _ := filepath.Match(soft, filepath.Base(filePath)); match {
 			err := w.childProcess.SoftRestart(relPath)
 			if err != nil {
@@ -156,7 +164,7 @@ func (w *filesystemWatcher) processFileChange(event fsnotify.Event) {
 		}
 	}
 
-	for patt, generated := range w.Config.Generated {
+	for patt, generated := range w.generated {
 		if match, _ := filepath.Match(patt, filepath.Base(filePath)); match {
 			log.Infof("generated file source: %s", relPath)
 			for _, task := range generated {
@@ -185,9 +193,9 @@ func (w *filesystemWatcher) processFileChange(event fsnotify.Event) {
 		return
 	}
 
-	if w.Config.EnvFiles != nil {
+	if w.envFiles != nil {
 		f := filepath.Base(filePath)
-		for _, envFile := range w.Config.EnvFiles {
+		for _, envFile := range w.envFiles {
 			if f == envFile {
 				log.Infof("modified env file: %s", relPath)
 				err := w.childProcess.HardRestart(relPath)
@@ -203,14 +211,14 @@ func (w *filesystemWatcher) processFileChange(event fsnotify.Event) {
 }
 
 func (w *filesystemWatcher) watchTree() error {
-	return filepath.Walk(w.Config.RootDirectory, func(srcPath string, f os.FileInfo, err error) error {
+	return filepath.Walk(w.rootDirectory, func(srcPath string, f os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
 		if f.IsDir() {
 			isExcluded := false
 			for _, exclude := range w.excludePaths {
-				p := path.Join(w.Config.RootDirectory, exclude)
+				p := path.Join(w.rootDirectory, exclude)
 				if srcPath == p {
 					isExcluded = true
 					break

@@ -241,7 +241,7 @@ func main() {
 	}
 }
 
-func loadConfig() (*config.Config, error) {
+func loadConfig() (config.Config, error) {
 	var configPath string
 	var rootDirectory string
 	var entrypoint string
@@ -302,7 +302,7 @@ func loadConfig() (*config.Config, error) {
 	return cfg, nil
 }
 
-func createDatabase(config *config.Config) (*sqlx.DB, error) {
+func createDatabase(config config.Config) (*sqlx.DB, error) {
 	dataPath := path.Join(config.RootDirectory, "./.gomon")
 	_, err := os.Stat(dataPath)
 	if err != nil {
