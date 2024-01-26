@@ -38,6 +38,7 @@ type Config struct {
 	SoftReload     []string            `yaml:"softReload"`
 	Generated      map[string][]string `yaml:"generated"`
 	Prestart       []string            `yaml:"prestart"`
+	ProxyOnly      bool                `yaml:"proxyOnly"`
 	Proxy          struct {
 		Enabled    bool `yaml:"enabled"`
 		Port       int  `yaml:"port"`

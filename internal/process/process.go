@@ -44,7 +44,9 @@ type ChildProcess interface {
 	HardRestart(string) error
 	SoftRestart(string) error
 	RunOutOfBandTask(string) error
+	Start() error
 	Close() error
+	AddEventSink(sink notif.NotificationSink)
 }
 
 const (

@@ -140,14 +140,20 @@ func main() {
 	}
 
 	// init the child process
-	childProcess, err := process.New(cfg, db,
-		process.WithConsoleOutput(console),
-		process.WithEventSink(console),
-		process.WithEventSink(proxy))
-	if err != nil {
-		log.Fatalf("creating child process: %v", err)
+	var childProcess process.ChildProcess
+	if cfg.ProxyOnly {
+		log.Info("proxy only mode enabled")
+		childProcess = process.NewDummy()
+	} else {
+		childProcess, err = process.New(cfg, db,
+			process.WithConsoleOutput(console),
+			process.WithEventSink(console),
+			process.WithEventSink(proxy))
+		if err != nil {
+			log.Fatalf("creating child process: %v", err)
+		}
+		defer childProcess.Close()
 	}
-	defer childProcess.Close()
 
 	// init the file system watcher/process spawner
 	watcher, err := watcher.New(cfg, childProcess)
@@ -220,6 +226,7 @@ func loadConfig() (config.Config, error) {
 	fs.StringVar(&configPath, "conf", "", "Path to a config file (gomon.config.yml))")
 	fs.StringVar(&rootDirectory, "dir", "", "The directory to watch")
 	fs.StringVar(&envFiles, "env", "", "A comma separated list of env files to load")
+	maybeProxyOnly := fs.Bool("proxy-only", false, "Only start the proxy, do not start the child process")
 	err := fs.Parse(os.Args[1:])
 	if err != nil {
 		log.Fatalf("parsing flags: %v", err)
@@ -265,6 +272,10 @@ func loadConfig() (config.Config, error) {
 
 	if envFiles != "" {
 		cfg.EnvFiles = strings.Split(envFiles, ",")
+	}
+
+	if maybeProxyOnly != nil {
+		cfg.ProxyOnly = *maybeProxyOnly
 	}
 
 	return cfg, nil
