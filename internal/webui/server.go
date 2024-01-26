@@ -46,14 +46,14 @@ type KiloEvent struct {
 }
 
 type server struct {
-	isEnabled           bool
-	port                int
-	httpServer          *http.Server
-	sseServer           *sse.Server
-	db                  *sqlx.DB
-	globalSystemControl notif.NotificationChannel
-	eventSink           chan notif.Notification
-	isClosed            atomic.Bool
+	isEnabled    bool
+	port         int
+	httpServer   *http.Server
+	sseServer    *sse.Server
+	db           *sqlx.DB
+	eventSink    chan notif.Notification
+	childProcess process.ChildProcess
+	isClosed     atomic.Bool
 }
 
 func withCORS(next http.Handler) http.Handler {
@@ -64,14 +64,14 @@ func withCORS(next http.Handler) http.Handler {
 	})
 }
 
-func New(cfg config.Config, gsc notif.NotificationChannel, db *sqlx.DB) (*server, error) {
+func New(cfg config.Config, db *sqlx.DB, childProcess process.ChildProcess) (*server, error) {
 	srv := &server{
-		isEnabled:           cfg.UI.Enabled,
-		port:                cfg.UI.Port,
-		db:                  db,
-		globalSystemControl: gsc,
-		eventSink:           make(chan notif.Notification),
-		isClosed:            atomic.Bool{},
+		isEnabled:    cfg.UI.Enabled,
+		port:         cfg.UI.Port,
+		db:           db,
+		eventSink:    make(chan notif.Notification),
+		childProcess: childProcess,
+		isClosed:     atomic.Bool{},
 	}
 
 	if !srv.isEnabled {
@@ -114,11 +114,7 @@ func (c *server) Start() error {
 	go func() {
 		err := c.httpServer.ListenAndServe()
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
-			c.globalSystemControl <- notif.Notification{
-				Type:     notif.NotificationTypeSystemError,
-				Message:  fmt.Sprintf("ui server shut down unexpectedly: %v", err),
-				Metadata: err,
-			}
+			panic(fmt.Sprintf("ui server shut down unexpectedly: %v", err))
 		}
 	}()
 
@@ -238,18 +234,12 @@ func (c *server) sendRunEvent(ev *console.LogRun) error {
 }
 
 func (c *server) restartActionHandler(w http.ResponseWriter, r *http.Request) {
-	c.globalSystemControl <- notif.Notification{
-		Type:    notif.NotificationTypeHardRestartRequested,
-		Message: process.ForceHardRestart,
-	}
+	c.childProcess.HardRestart("webui")
 	w.WriteHeader(http.StatusOK)
 }
 
 func (c *server) exitActionHandler(w http.ResponseWriter, r *http.Request) {
-	c.globalSystemControl <- notif.Notification{
-		Type:    notif.NotificationTypeSystemShutdown,
-		Message: process.ForceHardRestart,
-	}
+	c.childProcess.Close()
 	w.WriteHeader(http.StatusOK)
 }
 

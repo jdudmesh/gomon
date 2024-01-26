@@ -32,14 +32,13 @@ import (
 )
 
 type streams struct {
-	enabled             bool
-	db                  *sqlx.DB
-	stdoutWriter        chan string
-	stderrWriter        chan string
-	currentRunID        atomic.Int64
-	globalSystemControl notif.NotificationChannel
-	eventSinks          []notif.NotificationSink
-	closed              atomic.Bool
+	enabled      bool
+	db           *sqlx.DB
+	stdoutWriter chan string
+	stderrWriter chan string
+	currentRunID atomic.Int64
+	eventSinks   []notif.NotificationSink
+	closed       atomic.Bool
 }
 
 type streamWriter struct {
@@ -59,15 +58,14 @@ type LogEvent struct {
 	CreatedAt time.Time `db:"created_at" json:"createdAt"`
 }
 
-func New(cfg config.Config, gsc notif.NotificationChannel, db *sqlx.DB) (*streams, error) {
+func New(cfg config.Config, db *sqlx.DB) (*streams, error) {
 	stm := &streams{
-		enabled:             cfg.UI.Enabled,
-		db:                  db,
-		stdoutWriter:        make(chan string),
-		stderrWriter:        make(chan string),
-		globalSystemControl: gsc,
-		eventSinks:          []notif.NotificationSink{},
-		closed:              atomic.Bool{},
+		enabled:      cfg.UI.Enabled,
+		db:           db,
+		stdoutWriter: make(chan string),
+		stderrWriter: make(chan string),
+		eventSinks:   []notif.NotificationSink{},
+		closed:       atomic.Bool{},
 	}
 
 	return stm, nil

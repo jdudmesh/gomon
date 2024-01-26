@@ -40,6 +40,13 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+type ChildProcess interface {
+	HardRestart(string) error
+	SoftRestart(string) error
+	RunOutOfBandTask(string) error
+	Close() error
+}
+
 const (
 	ForceHardRestart = "__hard_reload"
 	ForceSoftRestart = "__soft_reload"
@@ -403,11 +410,13 @@ func (c *childProcess) closeChild() error {
 
 	cmd := c.getChildCmd()
 	if cmd == nil {
+		c.childOuterRunWait.Done()
 		c.setState(processStateStopped)
 		return nil
 	}
 
 	if cmd.Process == nil {
+		c.childOuterRunWait.Done()
 		c.setState(processStateStopped)
 		return nil
 	}

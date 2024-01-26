@@ -48,27 +48,25 @@ const gomonInjectCode = `
 const headTag = `<head>`
 
 type webProxy struct {
-	isEnabled           bool
-	port                int
-	downstreamHost      string
-	downstreamTimeout   time.Duration
-	globalSystemControl notif.NotificationChannel
-	eventSink           chan notif.Notification
-	isClosed            atomic.Bool
-	httpServer          *http.Server
-	sseServer           *sse.Server
-	injectCode          string
+	isEnabled         bool
+	port              int
+	downstreamHost    string
+	downstreamTimeout time.Duration
+	eventSink         chan notif.Notification
+	isClosed          atomic.Bool
+	httpServer        *http.Server
+	sseServer         *sse.Server
+	injectCode        string
 }
 
-func New(cfg config.Config, gsc notif.NotificationChannel) (*webProxy, error) {
+func New(cfg config.Config) (*webProxy, error) {
 	proxy := &webProxy{
-		isEnabled:           cfg.Proxy.Enabled,
-		port:                cfg.Proxy.Port,
-		downstreamHost:      cfg.Proxy.Downstream.Host,
-		downstreamTimeout:   time.Duration(cfg.Proxy.Downstream.Timeout) * time.Second,
-		globalSystemControl: gsc,
-		eventSink:           make(chan notif.Notification),
-		isClosed:            atomic.Bool{},
+		isEnabled:         cfg.Proxy.Enabled,
+		port:              cfg.Proxy.Port,
+		downstreamHost:    cfg.Proxy.Downstream.Host,
+		downstreamTimeout: time.Duration(cfg.Proxy.Downstream.Timeout) * time.Second,
+		eventSink:         make(chan notif.Notification),
+		isClosed:          atomic.Bool{},
 	}
 
 	err := proxy.initProxy()
@@ -138,11 +136,7 @@ func (p *webProxy) Start() error {
 	go func() {
 		err := p.httpServer.ListenAndServe()
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
-			p.globalSystemControl <- notif.Notification{
-				Type:     notif.NotificationTypeSystemError,
-				Message:  fmt.Sprintf("proxy server shut down unexpectedly: %v", err),
-				Metadata: err,
-			}
+			panic(fmt.Sprintf("proxy server shut down unexpectedly: %v", err))
 		}
 	}()
 

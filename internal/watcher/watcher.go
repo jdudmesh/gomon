@@ -29,12 +29,6 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-type ChildProcess interface {
-	HardRestart(string) error
-	SoftRestart(string) error
-	RunOutOfBandTask(string) error
-}
-
 type HotReloaderOption func(*filesystemWatcher) error
 
 type filesystemWatcher struct {
@@ -43,12 +37,12 @@ type filesystemWatcher struct {
 	softReload    []string
 	envFiles      []string
 	generated     map[string][]string
-	childProcess  ChildProcess
+	childProcess  process.ChildProcess
 	excludePaths  []string
 	watcher       *fsnotify.Watcher
 }
 
-func New(cfg config.Config, childProcess ChildProcess, opts ...HotReloaderOption) (*filesystemWatcher, error) {
+func New(cfg config.Config, childProcess process.ChildProcess, opts ...HotReloaderOption) (*filesystemWatcher, error) {
 	reloader := &filesystemWatcher{
 		rootDirectory: cfg.RootDirectory,
 		hardReload:    cfg.HardReload,

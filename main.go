@@ -29,7 +29,6 @@ import (
 
 	"github.com/jdudmesh/gomon/internal/config"
 	"github.com/jdudmesh/gomon/internal/console"
-	"github.com/jdudmesh/gomon/internal/notification"
 	"github.com/jdudmesh/gomon/internal/process"
 	"github.com/jdudmesh/gomon/internal/proxy"
 	"github.com/jdudmesh/gomon/internal/watcher"
@@ -91,10 +90,8 @@ func main() {
 		log.Fatalf("Cannot set working directory: %v", err)
 	}
 
-	globalSystemControl := notification.NewChannel()
-
 	// init the web proxy
-	proxy, err := proxy.New(cfg, globalSystemControl)
+	proxy, err := proxy.New(cfg)
 	if err != nil {
 		log.Fatalf("creating proxy: %v", err)
 	}
@@ -125,7 +122,7 @@ func main() {
 	}
 
 	// create the console redirector
-	console, err := console.New(cfg, globalSystemControl, db)
+	console, err := console.New(cfg, db)
 	if err != nil {
 		log.Fatalf("creating console: %v", err)
 	}
@@ -161,7 +158,7 @@ func main() {
 
 	// init the web UI
 	if cfg.UI.Enabled {
-		ui, err := webui.New(cfg, globalSystemControl, db)
+		ui, err := webui.New(cfg, db, childProcess)
 		if err != nil {
 			log.Fatalf("creating web UI: %v", err)
 		}
@@ -189,48 +186,19 @@ func main() {
 		log.Fatalf("running monitor: %v", err)
 	}
 
-	// listen for system notifications
-	go func() {
-		for n := range globalSystemControl {
-			switch n.Type {
-			case notification.NotificationTypeSystemError:
-				log.Error(n.Metadata.(error))
-				fallthrough
-			case notification.NotificationTypeSoftRestartRequested:
-				err = childProcess.SoftRestart(n.Message)
-				if err != nil {
-					log.Fatalf("soft restarting child process: %v", err)
-				}
-			case notification.NotificationTypeHardRestartRequested:
-				err = childProcess.HardRestart(n.Message)
-				if err != nil {
-					log.Fatalf("hard restarting child process: %v", err)
-				}
-			case notification.NotificationTypeSystemShutdown:
-				childProcess.Close()
-			}
-		}
-	}()
-
 	// listen for quit signal
 	sigint := make(chan os.Signal, 1)
 	defer close(sigint)
 	go func() {
-		signal.Notify(sigint, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+		signal.Notify(sigint, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 		for s := range sigint {
 			switch s {
 			case syscall.SIGHUP:
 				log.Info("received signal, restarting")
-				globalSystemControl <- notification.Notification{
-					Type:    notification.NotificationTypeHardRestart,
-					Message: "SIGHUP",
-				}
-			case os.Interrupt, syscall.SIGTERM:
+				childProcess.SoftRestart("signal")
+			case syscall.SIGINT, syscall.SIGTERM:
 				log.Info("received signal, exiting")
-				globalSystemControl <- notification.Notification{
-					Type:    notification.NotificationTypeSystemShutdown,
-					Message: "SIGTERM",
-				}
+				childProcess.Close()
 			}
 		}
 	}()
