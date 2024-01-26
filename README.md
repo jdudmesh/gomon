@@ -18,6 +18,7 @@ For example usage see [this example](https://github.com/jdudmesh/gomon-example)
 - Fire a page reload in the browser on hard or soft restart using SSE
 - Implements a Web UI which displays and can search console logs with history
 - prestart - run a list of tasks before running the main entrypoint e.g. `go generate`
+- proxy only - if you're running your project in a debugger you can run the proxy only so that downstream proxies (e.g. caddy) aren't broken
 
 ## UI Screenshot
 
@@ -46,9 +47,10 @@ This will simply `go run` your project and restart on changes to `*.go` files.
 `gomon` supports a number of command line parameters:
 
 ```
---conf - specify a config file (see below)
---dir  - use an alternative root directory
---env  - a comma separated list of environment variable files to load e.g. .env,.env.local
+--conf       - specify a config file (see below)
+--dir        - use an alternative root directory
+--env        - a comma separated list of environment variable files to load e.g. .env,.env.local
+--proxy-only - don't start the child process, just run the proxy
 ```
 
 ## Working Directory
