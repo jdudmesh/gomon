@@ -495,7 +495,7 @@ func (c *childProcess) startIPCServer() (string, error) {
 			switch msg.MsgType {
 			case gomonclient.MsgTypeStartup:
 				log.Info("Received startup message from downstream process")
-				c.notifyEventSinks(notif.Notification{Type: notif.NotificationTypeHardRestart})
+				c.notifyEventSinks(notif.Notification{Type: notif.NotificationTypeHardRestart, Message: "startup"})
 
 			case gomonclient.MsgTypeReloaded:
 				log.Info("Received reload message from downstream process")
