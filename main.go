@@ -18,22 +18,23 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"flag"
 	"fmt"
 	"os"
 	"os/signal"
-	"path"
 	"path/filepath"
 	"strings"
 	"syscall"
 
 	"github.com/jdudmesh/gomon/internal/config"
 	"github.com/jdudmesh/gomon/internal/console"
+	"github.com/jdudmesh/gomon/internal/notification"
 	"github.com/jdudmesh/gomon/internal/process"
 	"github.com/jdudmesh/gomon/internal/proxy"
+	"github.com/jdudmesh/gomon/internal/utils"
 	"github.com/jdudmesh/gomon/internal/watcher"
 	"github.com/jdudmesh/gomon/internal/webui"
-	"github.com/jmoiron/sqlx"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -71,7 +72,6 @@ func (l *logFormatter) Format(entry *log.Entry) ([]byte, error) {
 	return b.Bytes(), nil
 
 }
-
 func main() {
 	formatter := new(logFormatter)
 	log.SetFormatter(formatter)
@@ -90,11 +90,27 @@ func main() {
 		log.Fatalf("Cannot set working directory: %v", err)
 	}
 
+	db, err := utils.NewDatabase(cfg)
+	if err != nil {
+		log.Fatalf("creating database: %v", err)
+	}
+	defer func() {
+		log.Info("closing database")
+		db.Close()
+	}()
+
+	mainCtx, mainCtxCancel := context.WithCancel(context.Background())
+	defer mainCtxCancel()
+
+	hardRestart := make(chan struct{})
+	softRestart := make(chan struct{})
+
 	// init the web proxy
 	proxy, err := proxy.New(cfg)
 	if err != nil {
 		log.Fatalf("creating proxy: %v", err)
 	}
+
 	defer func() {
 		err := proxy.Close()
 		if err != nil {
@@ -102,117 +118,172 @@ func main() {
 		}
 	}()
 
-	err = proxy.Start()
-	if err != nil {
-		log.Fatalf("starting proxy: %v", err)
+	if proxy.Enabled() {
+		go func() {
+			err = proxy.Start()
+			if err != nil {
+				log.Errorf("starting proxy: %v", err)
+				mainCtxCancel()
+			}
+		}()
 	}
 
-	// TODO split console enabled from web UI enabled
-	// open the database (if enabled)
-	var db *sqlx.DB
-	if cfg.UI.Enabled {
-		db, err = createDatabase(cfg)
-		if err != nil {
-			log.Fatalf("creating database: %v", err)
+	webui, err := webui.New(cfg, db, func(n notification.Notification) {
+		db.LogNotification(n)
+		switch n.Type {
+		case notification.NotificationTypeHardRestartRequested:
+			hardRestart <- struct{}{}
+		case notification.NotificationTypeSoftRestartRequested:
+			softRestart <- struct{}{}
+		case notification.NotificationTypeShutdownRequested:
+			mainCtxCancel()
 		}
-		defer func() {
-			log.Info("closing database")
-			db.Close()
+	})
+
+	if err != nil {
+		log.Fatalf("creating web UI: %v", err)
+	}
+	defer func() {
+		webui.Close()
+	}()
+	if webui.Enabled() {
+		go func() {
+			err := webui.Start()
+			if err != nil {
+				log.Errorf("starting web UI: %v", err)
+				mainCtxCancel()
+			}
 		}()
 	}
 
 	// create the console redirector
-	console, err := console.New(cfg, db)
+	consoleWriter, err := console.New(cfg)
 	if err != nil {
 		log.Fatalf("creating console: %v", err)
 	}
 
 	defer func() {
-		err := console.Close()
+		err := consoleWriter.Close()
 		if err != nil {
 			log.Errorf("closing console: %v", err)
 		}
 	}()
 
-	err = console.Start()
-	if err != nil {
-		log.Fatalf("starting console: %v", err)
-	}
-
-	// init the child process
-	var childProcess process.ChildProcess
-	if cfg.ProxyOnly {
-		log.Info("proxy only mode enabled")
-		childProcess = process.NewDummy()
-	} else {
-		childProcess, err = process.New(cfg, db,
-			process.WithConsoleOutput(console),
-			process.WithEventSink(console),
-			process.WithEventSink(proxy))
+	go func() {
+		err := consoleWriter.Serve(func(n notification.Notification) {
+			db.LogNotification(n)
+			proxy.Notify(n)
+			webui.Notify(n)
+			switch n.Type {
+			case notification.NotificationTypeShutdownRequested:
+				mainCtxCancel()
+			case notification.NotificationTypeHardRestartRequested:
+				hardRestart <- struct{}{}
+			case notification.NotificationTypeSoftRestartRequested:
+				softRestart <- struct{}{}
+			}
+		})
 		if err != nil {
-			log.Fatalf("creating child process: %v", err)
+			log.Errorf("starting console: %v", err)
+			mainCtxCancel()
 		}
-		defer childProcess.Close()
-	}
+	}()
 
 	// init the file system watcher/process spawner
-	watcher, err := watcher.New(cfg, childProcess)
+	watcher, err := watcher.New(cfg)
 	if err != nil {
 		log.Fatalf("creating monitor: %v", err)
 	}
 	defer watcher.Close()
 
-	// init the web UI
-	if cfg.UI.Enabled {
-		ui, err := webui.New(cfg, db, childProcess)
-		if err != nil {
-			log.Fatalf("creating web UI: %v", err)
-		}
-		defer func() {
-			ui.Close()
-		}()
-
-		childProcess.AddEventSink(ui)
-		console.AddEventSink(ui)
-
-		err = ui.Start()
-		if err != nil {
-			log.Fatalf("starting web UI: %v", err)
-		}
-		defer ui.Close()
-	}
-
-	// all components should be up and running by now
-	pid := os.Getpid()
-	log.Infof("gomon started with pid %d", pid)
-
 	// start listening for file changes
-	err = watcher.Run()
-	if err != nil {
-		log.Fatalf("running monitor: %v", err)
-	}
+	go func() {
+		err = watcher.Watch(func(n notification.Notification) {
+			db.LogNotification(n)
+			switch n.Type {
+			case notification.NotificationTypeHardRestartRequested:
+				hardRestart <- struct{}{}
+			case notification.NotificationTypeSoftRestartRequested:
+				softRestart <- struct{}{}
+			}
+			consoleWriter.Notify(n)
+			proxy.Notify(n)
+		})
+		if err != nil {
+			log.Errorf("running monitor: %v", err)
+			mainCtxCancel()
+		}
+	}()
 
 	// listen for quit signal
 	sigint := make(chan os.Signal, 1)
 	defer close(sigint)
 	go func() {
-		signal.Notify(sigint, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
+		signal.Notify(sigint, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGUSR1)
 		for s := range sigint {
 			switch s {
 			case syscall.SIGHUP:
 				log.Info("received signal, restarting")
-				childProcess.SoftRestart("signal")
+				softRestart <- struct{}{}
+			case syscall.SIGUSR1:
+				log.Info("received signal, hard restarting")
+				hardRestart <- struct{}{}
 			case syscall.SIGINT, syscall.SIGTERM:
 				log.Info("received signal, exiting")
-				childProcess.Close()
+				mainCtxCancel()
 			}
 		}
 	}()
 
-	err = childProcess.Start()
-	if err != nil {
-		log.Fatalf("starting child process: %v", err)
-	}
+	// all components should be up and running by now
+	pid := os.Getpid()
+	log.Infof("gomon started with pid %d", pid)
+
+	// this is the main process loop
+	childProcess := process.AtomicChildProcess{}
+	childProcess.Store(nil)
+	go func() {
+		for mainCtx.Err() == nil {
+			proc, err := process.NewChildProcess(cfg)
+			if err != nil {
+				log.Fatalf("creating child process: %v", err)
+			}
+
+			childProcess.Store(proc)
+
+			proc.Start(mainCtx, consoleWriter, func(n notification.Notification) {
+				db.LogNotification(n)
+				consoleWriter.Notify(n)
+				proxy.Notify(n)
+				webui.Notify(n)
+			})
+
+			if mainCtx.Err() != nil {
+				break
+			}
+		}
+	}()
+
+	// handle restart events
+	go func() {
+		for {
+			select {
+			case <-hardRestart:
+				log.Info("hard restarting")
+				proc := childProcess.Load()
+				if proc != nil {
+					proc.Stop()
+				}
+			case <-softRestart:
+				log.Info("soft restarting")
+				//childProcess.SoftRestart("file change")
+			case <-mainCtx.Done():
+				return
+			}
+		}
+	}()
+
+	<-mainCtx.Done()
 }
 
 func loadConfig() (config.Config, error) {
@@ -280,48 +351,3 @@ func loadConfig() (config.Config, error) {
 
 	return cfg, nil
 }
-
-func createDatabase(config config.Config) (*sqlx.DB, error) {
-	dataPath := path.Join(config.RootDirectory, "./.gomon")
-	_, err := os.Stat(dataPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			err = os.Mkdir(dataPath, 0755)
-			if err != nil {
-				return nil, fmt.Errorf("creating .gomon directory: %w", err)
-			}
-		} else {
-			return nil, fmt.Errorf("checking for .gomon directory: %w", err)
-		}
-	}
-
-	db, err := sqlx.Connect("sqlite3", path.Join(dataPath, "./gomon.db"))
-	if err != nil {
-		return nil, fmt.Errorf("connecting to sqlite: %w", err)
-	}
-
-	_, err = db.Exec(schema)
-	if err != nil {
-		return nil, fmt.Errorf("creating db schema: %w", err)
-	}
-
-	return db, nil
-}
-
-var schema = `
-CREATE TABLE IF NOT EXISTS runs (
-	id INTEGER PRIMARY KEY AUTOINCREMENT,
-	created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-CREATE INDEX IF NOT EXISTS idx_runs_created_at ON runs(created_at);
-
-CREATE TABLE IF NOT EXISTS events (
-	id INTEGER PRIMARY KEY AUTOINCREMENT,
-	run_id INTEGER NOT NULL,
-	event_type TEXT NOT NULL,
-	event_data TEXT NOT NULL,
-	created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-CREATE INDEX IF NOT EXISTS idx_events_event_type ON events(event_type);
-CREATE INDEX IF NOT EXISTS idx_events_created_at ON events(created_at);
-`

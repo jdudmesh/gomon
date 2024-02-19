@@ -17,7 +17,6 @@ package console
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import (
-	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -25,162 +24,97 @@ import (
 	"time"
 
 	"github.com/jdudmesh/gomon/internal/config"
+	"github.com/jdudmesh/gomon/internal/notification"
 	notif "github.com/jdudmesh/gomon/internal/notification"
-	"github.com/jmoiron/sqlx"
 	_ "github.com/mattn/go-sqlite3"
 	log "github.com/sirupsen/logrus"
 )
 
 type streams struct {
-	enabled      bool
-	db           *sqlx.DB
-	stdoutWriter chan string
-	stderrWriter chan string
-	currentRunID atomic.Int64
-	eventSinks   []notif.NotificationSink
-	closed       atomic.Bool
+	enabled               bool
+	stdoutWriter          chan string
+	stderrWriter          chan string
+	currentRunID          atomic.Int64
+	currentChildProcessID string
 }
 
 type streamWriter struct {
-	eventSink chan string
+	streamConsumer chan string
 }
 
-type LogRun struct {
-	ID        int       `db:"id" json:"id"`
-	CreatedAt time.Time `db:"created_at" json:"createdAt"`
-}
-
-type LogEvent struct {
-	ID        int       `db:"id" json:"id"`
-	RunID     int       `db:"run_id" json:"runId"`
-	EventType string    `db:"event_type" json:"eventType"`
-	EventData string    `db:"event_data" json:"eventData"`
-	CreatedAt time.Time `db:"created_at" json:"createdAt"`
-}
-
-func New(cfg config.Config, db *sqlx.DB) (*streams, error) {
+func New(cfg config.Config) (*streams, error) {
 	stm := &streams{
 		enabled:      cfg.UI.Enabled,
-		db:           db,
 		stdoutWriter: make(chan string),
 		stderrWriter: make(chan string),
-		eventSinks:   []notif.NotificationSink{},
-		closed:       atomic.Bool{},
 	}
 
 	return stm, nil
 }
 
-func (s *streams) AddEventSink(sink notif.NotificationSink) {
-	s.eventSinks = append(s.eventSinks, sink)
-}
-
-func (s *streams) Start() error {
-	go func() {
-		for {
-			select {
-			case line := <-s.stdoutWriter:
-				if !s.enabled {
-					os.Stdout.WriteString(line)
-					continue
-				}
-				err := s.write("stdout", line)
-				if err != nil {
-					log.Errorf("writing stdout: %v", err)
-				}
-			case line := <-s.stderrWriter:
-				if !s.enabled {
-					os.Stderr.WriteString(line)
-					continue
-				}
-				err := s.write("stderr", line)
-				if err != nil {
-					log.Errorf("writing stderr: %v", err)
-				}
+func (s *streams) Serve(callbackFn notif.NotificationCallback) error {
+	for {
+		select {
+		case line := <-s.stdoutWriter:
+			if !s.enabled {
+				os.Stdout.WriteString(line)
+				continue
 			}
-			log.Debug("console streams loop")
+			err := s.write(notif.NotificationTypeStdOut, line, callbackFn)
+			if err != nil {
+				log.Errorf("writing stdout: %v", err)
+			}
+		case line := <-s.stderrWriter:
+			if !s.enabled {
+				os.Stderr.WriteString(line)
+				continue
+			}
+			err := s.write(notif.NotificationTypeStdErr, line, callbackFn)
+			if err != nil {
+				log.Errorf("writing stderr: %v", err)
+			}
 		}
-	}()
-	return nil
+	}
 }
 
 func (s *streams) Close() error {
 	log.Info("closing console streams")
-	s.closed.Store(true)
 	close(s.stdoutWriter)
 	close(s.stderrWriter)
 	return nil
 }
 
 func (s *streams) Stdout() io.Writer {
-	return &streamWriter{eventSink: s.stdoutWriter}
+	return &streamWriter{streamConsumer: s.stdoutWriter}
 }
 
 func (s *streams) Stderr() io.Writer {
-	return &streamWriter{eventSink: s.stderrWriter}
+	return &streamWriter{streamConsumer: s.stderrWriter}
 }
 
-func (s *streams) write(logType, logData string) error {
-	if s.closed.Load() {
-		if len(logData) > 0 {
-			log.Warnf("console streams closed, dropping log data: %s", logData)
-		}
-		return nil
-	}
-
-	runID := s.currentRunID.Load()
+func (s *streams) write(logType notif.NotificationType, logData string, callbackFn notif.NotificationCallback) error {
 	eventDate := time.Now()
 
 	for _, line := range strings.Split(logData, "\n") {
-		res, err := s.db.Exec(`
-				INSERT INTO events (run_id, event_type, event_data, created_at)
-				VALUES ($1, $2, $3, $4)`, runID, logType, line, eventDate)
-		if err != nil {
-			return fmt.Errorf("inserting event: %w", err)
-		}
-
-		eventID, err := res.LastInsertId()
-		if err != nil {
-			return fmt.Errorf("getting last insert id: %w", err)
-		}
-
-		n := notif.Notification{
-			Type: notif.NotificationTypeLogEvent,
-			Metadata: &LogEvent{
-				ID:        int(eventID),
-				RunID:     int(runID),
-				EventType: logType,
-				EventData: line,
-				CreatedAt: eventDate,
-			},
-		}
-
-		s.notifyEventListeners(n)
+		callbackFn(notif.Notification{
+			ID:              notification.NextID(),
+			Date:            eventDate,
+			ChildProccessID: s.currentChildProcessID,
+			Type:            logType,
+			Message:         line,
+		})
 	}
 
 	return nil
 }
 
 func (s *streams) Notify(n notif.Notification) {
-	if s == nil {
-		return
-	}
-
-	if n.Type != notif.NotificationTypeStartup {
-		return
-	}
-
-	runID := n.Metadata.(*LogRun).ID
-	s.currentRunID.Store(int64(runID))
-}
-
-func (s *streams) notifyEventListeners(n notif.Notification) {
-	for _, listener := range s.eventSinks {
-		listener.Notify(n)
+	if n.Type == notif.NotificationTypeStartup {
+		s.currentChildProcessID = n.ChildProccessID
 	}
 }
 
 func (w *streamWriter) Write(p []byte) (int, error) {
-	w.eventSink <- string(p)
+	w.streamConsumer <- string(p)
 	return len(p), nil
 }

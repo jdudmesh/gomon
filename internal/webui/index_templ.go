@@ -26,9 +26,16 @@ import "bytes"
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import (
-	"github.com/jdudmesh/gomon/internal/console"
-	"strconv"
+	"github.com/jdudmesh/gomon/internal/notification"
 )
+
+var colourMap = map[notification.NotificationType]string{
+	notification.NotificationTypeStdOut:         "text-green-400",
+	notification.NotificationTypeStdErr:         "text-red-400",
+	notification.NotificationTypeOOBTaskStartup: "text-yellow-400",
+	notification.NotificationTypeOOBTaskStdOut:  "text-yellow-400",
+	notification.NotificationTypeOOBTaskStdErr:  "text-orange-400",
+}
 
 func SearchNoResults() templ.Component {
 	return templ.ComponentFunc(func(ctx context.Context, w io.Writer) (err error) {
@@ -63,7 +70,7 @@ func SearchNoResults() templ.Component {
 	})
 }
 
-func SearchSelect(runs []*console.LogRun, currentRun int) templ.Component {
+func SearchSelect(runs []*notification.Notification, currentRun string) templ.Component {
 	return templ.ComponentFunc(func(ctx context.Context, w io.Writer) (err error) {
 		templBuffer, templIsBuffer := w.(*bytes.Buffer)
 		if !templIsBuffer {
@@ -80,11 +87,11 @@ func SearchSelect(runs []*console.LogRun, currentRun int) templ.Component {
 		if err != nil {
 			return err
 		}
-		_, err = templBuffer.WriteString(templ.EscapeString(strconv.Itoa(currentRun)))
+		_, err = templBuffer.WriteString(templ.EscapeString(currentRun))
 		if err != nil {
 			return err
 		}
-		_, err = templBuffer.WriteString("\"><option value=\"all\" selected>")
+		_, err = templBuffer.WriteString("\" hx-get=\"/search\" hx-include=\"[data-send=&#39;true&#39;]\" hx-target=\"#event-list\" hx-trigger=\"input\" data-send=\"true\"><option value=\"all\" selected>")
 		if err != nil {
 			return err
 		}
@@ -102,7 +109,7 @@ func SearchSelect(runs []*console.LogRun, currentRun int) templ.Component {
 			if err != nil {
 				return err
 			}
-			_, err = templBuffer.WriteString(templ.EscapeString(strconv.Itoa(r.ID)))
+			_, err = templBuffer.WriteString(templ.EscapeString(r.ChildProccessID))
 			if err != nil {
 				return err
 			}
@@ -110,7 +117,7 @@ func SearchSelect(runs []*console.LogRun, currentRun int) templ.Component {
 			if err != nil {
 				return err
 			}
-			if int(r.ID) == currentRun {
+			if r.ChildProccessID == currentRun {
 				if true {
 					_, err = templBuffer.WriteString(" selected")
 					if err != nil {
@@ -122,7 +129,7 @@ func SearchSelect(runs []*console.LogRun, currentRun int) templ.Component {
 			if err != nil {
 				return err
 			}
-			var var_5 string = r.CreatedAt.Format("2006-01-02 15:04:05")
+			var var_5 string = r.Date.Format("2006-01-02 15:04:05")
 			_, err = templBuffer.WriteString(templ.EscapeString(var_5))
 			if err != nil {
 				return err
@@ -143,7 +150,7 @@ func SearchSelect(runs []*console.LogRun, currentRun int) templ.Component {
 	})
 }
 
-func Event(ev *console.LogEvent) templ.Component {
+func Event(n *notification.Notification) templ.Component {
 	return templ.ComponentFunc(func(ctx context.Context, w io.Writer) (err error) {
 		templBuffer, templIsBuffer := w.(*bytes.Buffer)
 		if !templIsBuffer {
@@ -156,27 +163,65 @@ func Event(ev *console.LogEvent) templ.Component {
 			var_6 = templ.NopComponent
 		}
 		ctx = templ.ClearChildren(ctx)
-		_, err = templBuffer.WriteString("<div class=\"flex flex-row text-green-400 items-stretch\" data-event-date=\"{ev.CreatedAt}\"><div class=\"w-36 grow-0 shrink-0\">")
-		if err != nil {
-			return err
-		}
-		var var_7 string = ev.CreatedAt.Format("15:04:05.000")
-		_, err = templBuffer.WriteString(templ.EscapeString(var_7))
-		if err != nil {
-			return err
-		}
-		_, err = templBuffer.WriteString("</div><div class=\"break-all grow\">")
-		if err != nil {
-			return err
-		}
-		var var_8 string = ev.EventData
-		_, err = templBuffer.WriteString(templ.EscapeString(var_8))
-		if err != nil {
-			return err
-		}
-		_, err = templBuffer.WriteString("</div></div>")
-		if err != nil {
-			return err
+		if col, ok := colourMap[n.Type]; ok {
+			var var_7 = []any{"flex flex-row items-stretch " + col}
+			err = templ.RenderCSSItems(ctx, templBuffer, var_7...)
+			if err != nil {
+				return err
+			}
+			_, err = templBuffer.WriteString("<div class=\"")
+			if err != nil {
+				return err
+			}
+			_, err = templBuffer.WriteString(templ.EscapeString(templ.CSSClasses(var_7).String()))
+			if err != nil {
+				return err
+			}
+			_, err = templBuffer.WriteString("\" data-event-date=\"{n.CreatedAt}\"><div class=\"w-36 grow-0 shrink-0\">")
+			if err != nil {
+				return err
+			}
+			var var_8 string = n.Date.Format("15:04:05.000")
+			_, err = templBuffer.WriteString(templ.EscapeString(var_8))
+			if err != nil {
+				return err
+			}
+			_, err = templBuffer.WriteString("</div><div class=\"break-all grow { col }\">")
+			if err != nil {
+				return err
+			}
+			var var_9 string = n.Message
+			_, err = templBuffer.WriteString(templ.EscapeString(var_9))
+			if err != nil {
+				return err
+			}
+			_, err = templBuffer.WriteString("</div></div>")
+			if err != nil {
+				return err
+			}
+		} else {
+			_, err = templBuffer.WriteString("<div class=\"flex flex-row text-green-400 items-stretch\" data-event-date=\"{ev.CreatedAt}\"><div class=\"w-36 grow-0 shrink-0\">")
+			if err != nil {
+				return err
+			}
+			var var_10 string = n.Date.Format("15:04:05.000")
+			_, err = templBuffer.WriteString(templ.EscapeString(var_10))
+			if err != nil {
+				return err
+			}
+			_, err = templBuffer.WriteString("</div><div class=\"break-all grow\">")
+			if err != nil {
+				return err
+			}
+			var var_11 string = n.Message
+			_, err = templBuffer.WriteString(templ.EscapeString(var_11))
+			if err != nil {
+				return err
+			}
+			_, err = templBuffer.WriteString("</div></div>")
+			if err != nil {
+				return err
+			}
 		}
 		if !templIsBuffer {
 			_, err = templBuffer.WriteTo(w)
@@ -185,7 +230,7 @@ func Event(ev *console.LogEvent) templ.Component {
 	})
 }
 
-func EmptyRun(id int) templ.Component {
+func EmptyRun(id string) templ.Component {
 	return templ.ComponentFunc(func(ctx context.Context, w io.Writer) (err error) {
 		templBuffer, templIsBuffer := w.(*bytes.Buffer)
 		if !templIsBuffer {
@@ -193,16 +238,16 @@ func EmptyRun(id int) templ.Component {
 			defer templ.ReleaseBuffer(templBuffer)
 		}
 		ctx = templ.InitializeContext(ctx)
-		var_9 := templ.GetChildren(ctx)
-		if var_9 == nil {
-			var_9 = templ.NopComponent
+		var_12 := templ.GetChildren(ctx)
+		if var_12 == nil {
+			var_12 = templ.NopComponent
 		}
 		ctx = templ.ClearChildren(ctx)
 		_, err = templBuffer.WriteString("<hr class=\"h-px my-8 bg-green-400 border-0 dark:bg-green-700\"><div class=\"my-4\" id=\"")
 		if err != nil {
 			return err
 		}
-		_, err = templBuffer.WriteString(templ.EscapeString("run-" + strconv.Itoa(id)))
+		_, err = templBuffer.WriteString(templ.EscapeString(id))
 		if err != nil {
 			return err
 		}
@@ -217,7 +262,7 @@ func EmptyRun(id int) templ.Component {
 	})
 }
 
-func EventList(events [][]*console.LogEvent) templ.Component {
+func EventList(notifs [][]*notification.Notification) templ.Component {
 	return templ.ComponentFunc(func(ctx context.Context, w io.Writer) (err error) {
 		templBuffer, templIsBuffer := w.(*bytes.Buffer)
 		if !templIsBuffer {
@@ -225,17 +270,17 @@ func EventList(events [][]*console.LogEvent) templ.Component {
 			defer templ.ReleaseBuffer(templBuffer)
 		}
 		ctx = templ.InitializeContext(ctx)
-		var_10 := templ.GetChildren(ctx)
-		if var_10 == nil {
-			var_10 = templ.NopComponent
+		var_13 := templ.GetChildren(ctx)
+		if var_13 == nil {
+			var_13 = templ.NopComponent
 		}
 		ctx = templ.ClearChildren(ctx)
-		for _, run := range events {
+		for _, run := range notifs {
 			_, err = templBuffer.WriteString("<hr class=\"h-px my-8 bg-green-400 border-0 dark:bg-green-700\"> <div class=\"my-4\" id=\"")
 			if err != nil {
 				return err
 			}
-			_, err = templBuffer.WriteString(templ.EscapeString("run-" + strconv.Itoa(run[0].RunID)))
+			_, err = templBuffer.WriteString(templ.EscapeString(run[0].ChildProccessID))
 			if err != nil {
 				return err
 			}
@@ -243,8 +288,8 @@ func EventList(events [][]*console.LogEvent) templ.Component {
 			if err != nil {
 				return err
 			}
-			for _, ev := range run {
-				err = Event(ev).Render(ctx, templBuffer)
+			for _, n := range run {
+				err = Event(n).Render(ctx, templBuffer)
 				if err != nil {
 					return err
 				}
@@ -261,7 +306,7 @@ func EventList(events [][]*console.LogEvent) templ.Component {
 	})
 }
 
-func Console(currentRun int, runs []*console.LogRun, events []*console.LogEvent) templ.Component {
+func Console(currentRun string, runs []*notification.Notification, events []*notification.Notification) templ.Component {
 	return templ.ComponentFunc(func(ctx context.Context, w io.Writer) (err error) {
 		templBuffer, templIsBuffer := w.(*bytes.Buffer)
 		if !templIsBuffer {
@@ -269,17 +314,17 @@ func Console(currentRun int, runs []*console.LogRun, events []*console.LogEvent)
 			defer templ.ReleaseBuffer(templBuffer)
 		}
 		ctx = templ.InitializeContext(ctx)
-		var_11 := templ.GetChildren(ctx)
-		if var_11 == nil {
-			var_11 = templ.NopComponent
+		var_14 := templ.GetChildren(ctx)
+		if var_14 == nil {
+			var_14 = templ.NopComponent
 		}
 		ctx = templ.ClearChildren(ctx)
 		_, err = templBuffer.WriteString("<!doctype html><html><head><title>")
 		if err != nil {
 			return err
 		}
-		var_12 := `gomon console`
-		_, err = templBuffer.WriteString(var_12)
+		var_15 := `gomon console`
+		_, err = templBuffer.WriteString(var_15)
 		if err != nil {
 			return err
 		}
@@ -287,8 +332,8 @@ func Console(currentRun int, runs []*console.LogRun, events []*console.LogEvent)
 		if err != nil {
 			return err
 		}
-		var_13 := ``
-		_, err = templBuffer.WriteString(var_13)
+		var_16 := ``
+		_, err = templBuffer.WriteString(var_16)
 		if err != nil {
 			return err
 		}
@@ -296,8 +341,8 @@ func Console(currentRun int, runs []*console.LogRun, events []*console.LogEvent)
 		if err != nil {
 			return err
 		}
-		var_14 := ``
-		_, err = templBuffer.WriteString(var_14)
+		var_17 := ``
+		_, err = templBuffer.WriteString(var_17)
 		if err != nil {
 			return err
 		}
@@ -305,8 +350,8 @@ func Console(currentRun int, runs []*console.LogRun, events []*console.LogEvent)
 		if err != nil {
 			return err
 		}
-		var_15 := `#event-list > :first-child { margin-top: auto !important; }`
-		_, err = templBuffer.WriteString(var_15)
+		var_18 := `#event-list > :first-child { margin-top: auto !important; }`
+		_, err = templBuffer.WriteString(var_18)
 		if err != nil {
 			return err
 		}
@@ -314,7 +359,7 @@ func Console(currentRun int, runs []*console.LogRun, events []*console.LogEvent)
 		if err != nil {
 			return err
 		}
-		_, err = templBuffer.WriteString(templ.EscapeString(strconv.Itoa(currentRun)))
+		_, err = templBuffer.WriteString(templ.EscapeString(currentRun))
 		if err != nil {
 			return err
 		}
@@ -322,8 +367,8 @@ func Console(currentRun int, runs []*console.LogRun, events []*console.LogEvent)
 		if err != nil {
 			return err
 		}
-		var_16 := `gomon`
-		_, err = templBuffer.WriteString(var_16)
+		var_19 := `gomon`
+		_, err = templBuffer.WriteString(var_19)
 		if err != nil {
 			return err
 		}
@@ -331,8 +376,8 @@ func Console(currentRun int, runs []*console.LogRun, events []*console.LogEvent)
 		if err != nil {
 			return err
 		}
-		var_17 := `Filter:`
-		_, err = templBuffer.WriteString(var_17)
+		var_20 := `Filter:`
+		_, err = templBuffer.WriteString(var_20)
 		if err != nil {
 			return err
 		}
@@ -340,8 +385,8 @@ func Console(currentRun int, runs []*console.LogRun, events []*console.LogEvent)
 		if err != nil {
 			return err
 		}
-		var_18 := `Stream:`
-		_, err = templBuffer.WriteString(var_18)
+		var_21 := `Stream:`
+		_, err = templBuffer.WriteString(var_21)
 		if err != nil {
 			return err
 		}
@@ -349,8 +394,8 @@ func Console(currentRun int, runs []*console.LogRun, events []*console.LogEvent)
 		if err != nil {
 			return err
 		}
-		var_19 := `all`
-		_, err = templBuffer.WriteString(var_19)
+		var_22 := `all`
+		_, err = templBuffer.WriteString(var_22)
 		if err != nil {
 			return err
 		}
@@ -358,8 +403,8 @@ func Console(currentRun int, runs []*console.LogRun, events []*console.LogEvent)
 		if err != nil {
 			return err
 		}
-		var_20 := `stdout`
-		_, err = templBuffer.WriteString(var_20)
+		var_23 := `stdout`
+		_, err = templBuffer.WriteString(var_23)
 		if err != nil {
 			return err
 		}
@@ -367,8 +412,8 @@ func Console(currentRun int, runs []*console.LogRun, events []*console.LogEvent)
 		if err != nil {
 			return err
 		}
-		var_21 := `stderr`
-		_, err = templBuffer.WriteString(var_21)
+		var_24 := `stderr`
+		_, err = templBuffer.WriteString(var_24)
 		if err != nil {
 			return err
 		}
@@ -376,56 +421,25 @@ func Console(currentRun int, runs []*console.LogRun, events []*console.LogEvent)
 		if err != nil {
 			return err
 		}
-		var_22 := `Run:`
-		_, err = templBuffer.WriteString(var_22)
+		var_25 := `Run:`
+		_, err = templBuffer.WriteString(var_25)
 		if err != nil {
 			return err
 		}
-		_, err = templBuffer.WriteString("</label><select name=\"run\" class=\"select select-bordered text-slate-900\" hx-get=\"/search\" hx-include=\"[data-send=&#39;true&#39;]\" hx-target=\"#event-list\" hx-trigger=\"input\" data-send=\"true\">")
+		_, err = templBuffer.WriteString("</label>")
 		if err != nil {
 			return err
 		}
-		for _, r := range runs {
-			_, err = templBuffer.WriteString("<option value=\"")
-			if err != nil {
-				return err
-			}
-			_, err = templBuffer.WriteString(templ.EscapeString(strconv.Itoa(r.ID)))
-			if err != nil {
-				return err
-			}
-			_, err = templBuffer.WriteString("\"")
-			if err != nil {
-				return err
-			}
-			if int(r.ID) == currentRun {
-				if true {
-					_, err = templBuffer.WriteString(" selected")
-					if err != nil {
-						return err
-					}
-				}
-			}
-			_, err = templBuffer.WriteString(">")
-			if err != nil {
-				return err
-			}
-			var var_23 string = r.CreatedAt.Format("2006-01-02 15:04:05")
-			_, err = templBuffer.WriteString(templ.EscapeString(var_23))
-			if err != nil {
-				return err
-			}
-			_, err = templBuffer.WriteString("</option>")
-			if err != nil {
-				return err
-			}
-		}
-		_, err = templBuffer.WriteString("</select><button id=\"btn-search\" class=\"btn btn-primary\" hx-get=\"/search\" hx-include=\"[data-send=&#39;true&#39;]\" hx-target=\"#event-list\" hx-trigger=\"click\">")
+		err = SearchSelect(runs, currentRun).Render(ctx, templBuffer)
 		if err != nil {
 			return err
 		}
-		var_24 := `Search`
-		_, err = templBuffer.WriteString(var_24)
+		_, err = templBuffer.WriteString("<button id=\"btn-search\" class=\"btn btn-primary\" hx-get=\"/search\" hx-include=\"[data-send=&#39;true&#39;]\" hx-target=\"#event-list\" hx-trigger=\"click\">")
+		if err != nil {
+			return err
+		}
+		var_26 := `Search`
+		_, err = templBuffer.WriteString(var_26)
 		if err != nil {
 			return err
 		}
@@ -433,8 +447,8 @@ func Console(currentRun int, runs []*console.LogRun, events []*console.LogEvent)
 		if err != nil {
 			return err
 		}
-		var_25 := `Hard Restart`
-		_, err = templBuffer.WriteString(var_25)
+		var_27 := `Hard Restart`
+		_, err = templBuffer.WriteString(var_27)
 		if err != nil {
 			return err
 		}
@@ -442,8 +456,8 @@ func Console(currentRun int, runs []*console.LogRun, events []*console.LogEvent)
 		if err != nil {
 			return err
 		}
-		var_26 := `hello`
-		_, err = templBuffer.WriteString(var_26)
+		var_28 := `hello`
+		_, err = templBuffer.WriteString(var_28)
 		if err != nil {
 			return err
 		}
@@ -451,7 +465,7 @@ func Console(currentRun int, runs []*console.LogRun, events []*console.LogEvent)
 		if err != nil {
 			return err
 		}
-		var_27 := `
+		var_29 := `
 				const currentRun = document.body.getAttribute("data-current-run");
 				const eventList = document.getElementById("event-list");
 				function listen() {
@@ -483,7 +497,7 @@ func Console(currentRun int, runs []*console.LogRun, events []*console.LogEvent)
 
 				listen();
 			`
-		_, err = templBuffer.WriteString(var_27)
+		_, err = templBuffer.WriteString(var_29)
 		if err != nil {
 			return err
 		}

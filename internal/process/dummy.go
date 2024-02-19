@@ -16,7 +16,7 @@ func NewDummy() ChildProcess {
 	}
 }
 
-func (d *dummyProcess) AddEventSink(sink notif.NotificationSink) {}
+func (d *dummyProcess) AddEventConsumer(sink notif.EventConsumer) {}
 
 func (d *dummyProcess) Start() error {
 	d.childOuterRunWait.Add(1)

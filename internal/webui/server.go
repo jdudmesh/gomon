@@ -24,15 +24,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strconv"
-	"sync/atomic"
+	"time"
 
 	"github.com/a-h/templ"
 	"github.com/jdudmesh/gomon/internal/config"
-	"github.com/jdudmesh/gomon/internal/console"
 	notif "github.com/jdudmesh/gomon/internal/notification"
-	"github.com/jdudmesh/gomon/internal/process"
-	"github.com/jmoiron/sqlx"
+	"github.com/jdudmesh/gomon/internal/utils"
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/r3labs/sse/v2"
 	log "github.com/sirupsen/logrus"
@@ -46,14 +43,13 @@ type KiloEvent struct {
 }
 
 type server struct {
-	isEnabled    bool
-	port         int
-	httpServer   *http.Server
-	sseServer    *sse.Server
-	db           *sqlx.DB
-	eventSink    chan notif.Notification
-	childProcess process.ChildProcess
-	isClosed     atomic.Bool
+	isEnabled             bool
+	port                  int
+	httpServer            *http.Server
+	sseServer             *sse.Server
+	db                    *utils.Database
+	callbackFn            notif.NotificationCallback
+	currentChildProcessID string
 }
 
 func withCORS(next http.Handler) http.Handler {
@@ -64,14 +60,12 @@ func withCORS(next http.Handler) http.Handler {
 	})
 }
 
-func New(cfg config.Config, db *sqlx.DB, childProcess process.ChildProcess) (*server, error) {
+func New(cfg config.Config, db *utils.Database, callbackFn notif.NotificationCallback) (*server, error) {
 	srv := &server{
-		isEnabled:    cfg.UI.Enabled,
-		port:         cfg.UI.Port,
-		db:           db,
-		eventSink:    make(chan notif.Notification),
-		childProcess: childProcess,
-		isClosed:     atomic.Bool{},
+		isEnabled:  cfg.UI.Enabled,
+		port:       cfg.UI.Port,
+		db:         db,
+		callbackFn: callbackFn,
 	}
 
 	if !srv.isEnabled {
@@ -111,40 +105,16 @@ func (c *server) Start() error {
 	}
 
 	log.Infof("Starting UI server on http://localhost:%d", c.port)
-	go func() {
-		err := c.httpServer.ListenAndServe()
-		if err != nil && !errors.Is(err, http.ErrServerClosed) {
-			panic(fmt.Sprintf("ui server shut down unexpectedly: %v", err))
-		}
-	}()
-
-	go func() {
-		err := (error)(nil)
-		for ev := range c.eventSink {
-			switch ev.Type {
-			case notif.NotificationTypeStartup:
-				err = c.sendRunEvent(ev.Metadata.(*console.LogRun))
-			case notif.NotificationTypeLogEvent:
-				err = c.sendLogEvent(ev.Metadata.(*console.LogEvent))
-			}
-			if err != nil {
-				log.Errorf("sending log event: %v", err)
-			}
-		}
-		log.Info("closing event monitor")
-	}()
+	err := c.httpServer.ListenAndServe()
+	if err != nil && !errors.Is(err, http.ErrServerClosed) {
+		panic(fmt.Sprintf("ui server shut down unexpectedly: %v", err))
+	}
 
 	return nil
 }
 
 func (c *server) Close() error {
-	if c.isClosed.Load() {
-		return nil
-	}
 	log.Info("closing UI server")
-	c.isClosed.Store(true)
-
-	close(c.eventSink)
 
 	if c.sseServer != nil {
 		c.sseServer.Close()
@@ -160,22 +130,34 @@ func (c *server) Close() error {
 	return nil
 }
 
-func (c *server) Notify(n notif.Notification) {
-	if c.isClosed.Load() {
-		return
-	}
-	c.eventSink <- n
+func (c *server) Enabled() bool {
+	return c.isEnabled
 }
 
-func (c *server) sendLogEvent(ev *console.LogEvent) error {
+func (c *server) Notify(n notif.Notification) {
+	var err error
+
+	switch n.Type {
+	case notif.NotificationTypeStartup:
+		c.currentChildProcessID = n.ChildProccessID
+		err = c.sendRunEvent(n)
+	case notif.NotificationTypeLogEvent:
+		err = c.sendLogEvent(n)
+	}
+	if err != nil {
+		log.Errorf("sending log event: %v", err)
+	}
+}
+
+func (c *server) sendLogEvent(n notif.Notification) error {
 	buffer := bytes.Buffer{}
-	err := Event(ev).Render(context.Background(), &buffer)
+	err := Event(&n).Render(context.Background(), &buffer)
 	if err != nil {
 		return fmt.Errorf("rendering event: %w", err)
 	}
 
 	msg := KiloEvent{
-		Target: "#run-" + strconv.Itoa(ev.RunID),
+		Target: "#" + n.ChildProccessID,
 		Swap:   "beforeend scroll:lastchild",
 		Markup: buffer.String(),
 	}
@@ -191,9 +173,9 @@ func (c *server) sendLogEvent(ev *console.LogEvent) error {
 	return nil
 }
 
-func (c *server) sendRunEvent(ev *console.LogRun) error {
+func (c *server) sendRunEvent(n notif.Notification) error {
 	buffer := bytes.Buffer{}
-	err := EmptyRun(ev.ID).Render(context.Background(), &buffer)
+	err := EmptyRun(n.ChildProccessID).Render(context.Background(), &buffer)
 	if err != nil {
 		return fmt.Errorf("rendering event: %w", err)
 	}
@@ -234,12 +216,24 @@ func (c *server) sendRunEvent(ev *console.LogRun) error {
 }
 
 func (c *server) restartActionHandler(w http.ResponseWriter, r *http.Request) {
-	c.childProcess.HardRestart("webui")
+	c.callbackFn(notif.Notification{
+		ID:              notif.NextID(),
+		Date:            time.Now(),
+		ChildProccessID: c.currentChildProcessID,
+		Type:            notif.NotificationTypeHardRestartRequested,
+		Message:         "webui",
+	})
 	w.WriteHeader(http.StatusOK)
 }
 
 func (c *server) exitActionHandler(w http.ResponseWriter, r *http.Request) {
-	c.childProcess.Close()
+	c.callbackFn(notif.Notification{
+		ID:              notif.NextID(),
+		Date:            time.Now(),
+		ChildProccessID: c.currentChildProcessID,
+		Type:            notif.NotificationTypeShutdownRequested,
+		Message:         "webui",
+	})
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -248,59 +242,12 @@ func (c *server) searchActionHandler(w http.ResponseWriter, r *http.Request) {
 	runID := r.URL.Query().Get("r")
 	stm := r.URL.Query().Get("stm")
 	filter := r.URL.Query().Get("q")
-	events := [][]*console.LogEvent{}
 
-	if runID == "" {
-		err = c.db.Get(&runID, "SELECT id FROM runs ORDER BY created_at DESC LIMIT 1;")
-		if err != nil {
-			log.Errorf("getting run id: %v", err)
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-	}
-
-	if runID != "" {
-		params := map[string]interface{}{}
-		sql := "SELECT * FROM events WHERE "
-		if runID == "all" {
-			sql += "1 = 1 " // dummy clause
-		} else {
-			params["run_id"] = runID
-			sql += "run_id = :run_id "
-		}
-		if !(stm == "" || stm == "all") {
-			sql += " AND event_type = :event_type "
-			params["event_type"] = stm
-		}
-		if filter != "" {
-			sql += " AND event_data LIKE :event_data "
-			params["event_data"] = "%" + filter + "%"
-		}
-		sql += " ORDER BY run_id ASC, created_at ASC limit 1000;"
-
-		res, err := c.db.NamedQuery(sql, params)
-		if err != nil {
-			log.Errorf("getting event: %v", err)
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-		defer res.Close()
-
-		var lastRunID int = -1
-		for res.Next() {
-			ev := new(console.LogEvent)
-			err = res.StructScan(ev)
-			if err != nil {
-				log.Errorf("scanning event: %v", err)
-				w.WriteHeader(http.StatusInternalServerError)
-				return
-			}
-			if lastRunID != ev.RunID {
-				events = append(events, []*console.LogEvent{})
-				lastRunID = int(ev.RunID)
-			}
-			events[len(events)-1] = append(events[len(events)-1], ev)
-		}
+	events, err := c.db.FindNotifications(runID, stm, filter)
+	if err != nil {
+		log.Errorf("finding notifications: %v", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
 	}
 
 	markup := (templ.Component)(nil)
@@ -332,17 +279,14 @@ func (c *server) searchSelectComponentHandler(w http.ResponseWriter, r *http.Req
 }
 
 func (c *server) searchSelectComponent(w io.Writer) error {
-	var err error
-
-	runs := []*console.LogRun{}
-	err = c.db.Select(&runs, "SELECT * FROM runs ORDER BY created_at DESC limit 50")
+	runs, err := c.db.FindRuns()
 	if err != nil {
-		return fmt.Errorf("getting runs: %w", err)
+		return fmt.Errorf("finding runs: %w", err)
 	}
 
-	currentRun := 0
+	currentRun := ""
 	if len(runs) > 0 {
-		currentRun = int(runs[0].ID)
+		currentRun = runs[0].ChildProccessID
 	}
 
 	markup := SearchSelect(runs, currentRun)

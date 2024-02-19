@@ -26,7 +26,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"strings"
-	"sync/atomic"
+	"sync"
 	"time"
 
 	"github.com/jdudmesh/gomon/internal/config"
@@ -52,10 +52,9 @@ type webProxy struct {
 	port              int
 	downstreamHost    string
 	downstreamTimeout time.Duration
-	eventSink         chan notif.Notification
-	isClosed          atomic.Bool
 	httpServer        *http.Server
 	sseServer         *sse.Server
+	sseServerLock     sync.Mutex
 	injectCode        string
 }
 
@@ -65,8 +64,7 @@ func New(cfg config.Config) (*webProxy, error) {
 		port:              cfg.Proxy.Port,
 		downstreamHost:    cfg.Proxy.Downstream.Host,
 		downstreamTimeout: time.Duration(cfg.Proxy.Downstream.Timeout) * time.Second,
-		eventSink:         make(chan notif.Notification),
-		isClosed:          atomic.Bool{},
+		sseServerLock:     sync.Mutex{},
 	}
 
 	err := proxy.initProxy()
@@ -75,6 +73,9 @@ func New(cfg config.Config) (*webProxy, error) {
 	}
 
 	return proxy, nil
+}
+func (p *webProxy) Enabled() bool {
+	return p.isEnabled
 }
 
 func (p *webProxy) initProxy() error {
@@ -128,39 +129,15 @@ func (p *webProxy) initProxy() error {
 }
 
 func (p *webProxy) Start() error {
-	if !p.isEnabled {
-		return nil
-	}
-
 	log.Infof("proxy server running on http://localhost:%d", p.port)
-	go func() {
-		err := p.httpServer.ListenAndServe()
-		if err != nil && !errors.Is(err, http.ErrServerClosed) {
-			panic(fmt.Sprintf("proxy server shut down unexpectedly: %v", err))
-		}
-	}()
-
-	go func() {
-		for msg := range p.eventSink {
-			if msg.Type == notif.NotificationTypeHardRestart || msg.Type == notif.NotificationTypeSoftRestart {
-				log.Infof("notifying browser: %s", msg.Message)
-				p.sseServer.Publish("hmr", &sse.Event{
-					Data: []byte(msg.Message),
-				})
-			}
-		}
-	}()
-
+	err := p.httpServer.ListenAndServe()
+	if err != nil && !errors.Is(err, http.ErrServerClosed) {
+		panic(fmt.Sprintf("proxy server shut down unexpectedly: %v", err))
+	}
 	return nil
 }
 
 func (p *webProxy) Close() error {
-	if p.isClosed.Load() {
-		return nil
-	}
-
-	p.isClosed.Store(true)
-
 	if p.sseServer != nil {
 		p.sseServer.Close()
 	}
@@ -169,16 +146,23 @@ func (p *webProxy) Close() error {
 		return p.httpServer.Shutdown(context.Background())
 	}
 
-	close(p.eventSink)
-
 	return nil
 }
 
 func (p *webProxy) Notify(n notif.Notification) {
-	if p.isClosed.Load() {
+	if !p.isEnabled {
 		return
 	}
-	p.eventSink <- n
+	p.sseServerLock.Lock()
+	defer p.sseServerLock.Unlock()
+
+	switch n.Type {
+	case notif.NotificationTypeHardRestart, notif.NotificationTypeSoftRestart, notif.NotificationTypeStartup, notif.NotificationTypeShutdown:
+		log.Infof("notifying browser: %s", n.Message)
+		p.sseServer.Publish("hmr", &sse.Event{
+			Data: []byte(n.Message),
+		})
+	}
 }
 
 func (p *webProxy) handleReload(res http.ResponseWriter, req *http.Request) {
