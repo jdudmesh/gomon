@@ -156,22 +156,23 @@ func (c *childProcess) Start(ctx context.Context, console ConsoleOutput, callbac
 		exitStatus <- s
 	}()
 
-	select {
-	case <-c.termChild:
-		log.Info("stopping child process: terminate requested")
-		err := syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
-		if err != nil {
-			return err
+event_loop:
+	for {
+		select {
+		case <-c.termChild:
+			log.Info("stopping child process: terminate requested")
+			err := syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
+			if err != nil {
+				return err
+			}
+		case <-c.killChild:
+			log.Info("stopping child process: close requested")
+			cancelChildContext()
+		case s := <-exitStatus:
+			log.Infof("child process exited with status: %d", s)
+			break event_loop
 		}
-	case <-c.killChild:
-		log.Info("stopping child process: close requested")
-		cancelChildContext()
-	case <-childContext.Done():
-		log.Info("child process closed: context cancelled")
 	}
-
-	s := <-exitStatus
-	log.Infof("child process exited with status: %d", s)
 
 	c.state.Set(ProcessStateStopped)
 

@@ -26,7 +26,9 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
+	ipc "github.com/jdudmesh/gomon-ipc"
 	"github.com/jdudmesh/gomon/internal/config"
 	"github.com/jdudmesh/gomon/internal/console"
 	"github.com/jdudmesh/gomon/internal/notification"
@@ -102,8 +104,8 @@ func main() {
 	mainCtx, mainCtxCancel := context.WithCancel(context.Background())
 	defer mainCtxCancel()
 
-	hardRestart := make(chan struct{})
-	softRestart := make(chan struct{})
+	hardRestart := make(chan string)
+	softRestart := make(chan string)
 
 	// init the web proxy
 	proxy, err := proxy.New(cfg)
@@ -132,9 +134,9 @@ func main() {
 		db.LogNotification(n)
 		switch n.Type {
 		case notification.NotificationTypeHardRestartRequested:
-			hardRestart <- struct{}{}
+			hardRestart <- "webui"
 		case notification.NotificationTypeSoftRestartRequested:
-			softRestart <- struct{}{}
+			softRestart <- "webui"
 		case notification.NotificationTypeShutdownRequested:
 			mainCtxCancel()
 		}
@@ -172,19 +174,29 @@ func main() {
 	go func() {
 		err := consoleWriter.Serve(func(n notification.Notification) {
 			db.LogNotification(n)
-			proxy.Notify(n)
 			webui.Notify(n)
-			switch n.Type {
-			case notification.NotificationTypeShutdownRequested:
-				mainCtxCancel()
-			case notification.NotificationTypeHardRestartRequested:
-				hardRestart <- struct{}{}
-			case notification.NotificationTypeSoftRestartRequested:
-				softRestart <- struct{}{}
-			}
 		})
 		if err != nil {
 			log.Errorf("starting console: %v", err)
+			mainCtxCancel()
+		}
+	}()
+
+	// start the IPC server
+	notifier := notification.NewNotifier()
+	if err != nil {
+		log.Fatalf("creating notifier: %v", err)
+	}
+	defer notifier.Close()
+
+	go func() {
+		err := notifier.Start(func(n notification.Notification) {
+			db.LogNotification(n)
+			proxy.Notify(n)
+			webui.Notify(n)
+		})
+		if err != nil {
+			log.Errorf("starting IPC server: %v", err)
 			mainCtxCancel()
 		}
 	}()
@@ -202,11 +214,10 @@ func main() {
 			db.LogNotification(n)
 			switch n.Type {
 			case notification.NotificationTypeHardRestartRequested:
-				hardRestart <- struct{}{}
+				hardRestart <- n.Message
 			case notification.NotificationTypeSoftRestartRequested:
-				softRestart <- struct{}{}
+				softRestart <- n.Message
 			}
-			consoleWriter.Notify(n)
 			proxy.Notify(n)
 		})
 		if err != nil {
@@ -224,12 +235,12 @@ func main() {
 			switch s {
 			case syscall.SIGHUP:
 				log.Info("received signal, restarting")
-				softRestart <- struct{}{}
+				softRestart <- "sighup"
 			case syscall.SIGUSR1:
 				log.Info("received signal, hard restarting")
-				hardRestart <- struct{}{}
+				hardRestart <- "sigusr1"
 			case syscall.SIGINT, syscall.SIGTERM:
-				log.Info("received signal, exiting")
+				log.Info("received term signal, exiting")
 				mainCtxCancel()
 			}
 		}
@@ -268,15 +279,18 @@ func main() {
 	go func() {
 		for {
 			select {
-			case <-hardRestart:
-				log.Info("hard restarting")
+			case hint := <-hardRestart:
+				log.Info("hard restart: " + hint)
 				proc := childProcess.Load()
 				if proc != nil {
 					proc.Stop()
 				}
-			case <-softRestart:
-				log.Info("soft restarting")
-				//childProcess.SoftRestart("file change")
+			case hint := <-softRestart:
+				log.Info("soft restart: " + hint)
+				err := notifier.Notify(hint)
+				if err != nil {
+					log.Warnf("notifying child process: %v", err)
+				}
 			case <-mainCtx.Done():
 				return
 			}
@@ -284,6 +298,12 @@ func main() {
 	}()
 
 	<-mainCtx.Done()
+}
+
+func sendSoftRestart(ipcServer ipc.Connection, hint string) error {
+	ctx, cancelFn := context.WithTimeout(context.Background(), time.Second)
+	defer cancelFn()
+	return ipcServer.Write(ctx, []byte(hint))
 }
 
 func loadConfig() (config.Config, error) {

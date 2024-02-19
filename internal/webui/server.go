@@ -141,7 +141,7 @@ func (c *server) Notify(n notif.Notification) {
 	case notif.NotificationTypeStartup:
 		c.currentChildProcessID = n.ChildProccessID
 		err = c.sendRunEvent(n)
-	case notif.NotificationTypeLogEvent:
+	default:
 		err = c.sendLogEvent(n)
 	}
 	if err != nil {

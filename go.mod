@@ -1,11 +1,14 @@
 module github.com/jdudmesh/gomon
 
-go 1.20
+go 1.21.6
+
+toolchain go1.22.0
 
 require (
 	github.com/a-h/templ v0.2.364
 	github.com/bwmarrin/snowflake v0.3.0
 	github.com/fsnotify/fsnotify v1.6.0
+	github.com/jdudmesh/gomon-ipc v0.0.0-20240209143602-9c4883705510
 	github.com/jmoiron/sqlx v1.3.5
 	github.com/mattn/go-sqlite3 v1.14.6
 	github.com/r3labs/sse/v2 v2.10.0
@@ -14,8 +17,11 @@ require (
 )
 
 require (
+	github.com/google/uuid v1.6.0 // indirect
 	github.com/stretchr/testify v1.8.4 // indirect
-	golang.org/x/net v0.17.0 // indirect
-	golang.org/x/sys v0.14.0 // indirect
+	golang.org/x/net v0.20.0 // indirect
+	golang.org/x/sys v0.16.0 // indirect
 	gopkg.in/cenkalti/backoff.v1 v1.1.0 // indirect
 )
+
+replace github.com/jdudmesh/gomon-ipc => ../gomon-ipc

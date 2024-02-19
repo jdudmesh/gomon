@@ -27,6 +27,7 @@ const (
 	NotificationTypeOOBTaskStartup
 	NotificationTypeOOBTaskStdOut
 	NotificationTypeOOBTaskStdErr
+	NotificationTypeIPC
 )
 
 type Notification struct {

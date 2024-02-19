@@ -21,6 +21,8 @@ import (
 )
 
 var colourMap = map[notification.NotificationType]string{
+	notification.NotificationTypeStartup: "text-blue-400",
+	notification.NotificationTypeShutdown: "text-blue-400",
 	notification.NotificationTypeStdOut: "text-green-400",
 	notification.NotificationTypeStdErr: "text-red-400",
 	notification.NotificationTypeOOBTaskStartup: "text-yellow-400",
