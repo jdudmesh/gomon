@@ -28,7 +28,7 @@ import (
 
 	"github.com/a-h/templ"
 	"github.com/jdudmesh/gomon/internal/config"
-	notif "github.com/jdudmesh/gomon/internal/notification"
+	"github.com/jdudmesh/gomon/internal/notification"
 	"github.com/jdudmesh/gomon/internal/utils"
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/r3labs/sse/v2"
@@ -48,7 +48,7 @@ type server struct {
 	httpServer            *http.Server
 	sseServer             *sse.Server
 	db                    *utils.Database
-	callbackFn            notif.NotificationCallback
+	callbackFn            notification.NotificationCallback
 	currentChildProcessID string
 }
 
@@ -60,7 +60,7 @@ func withCORS(next http.Handler) http.Handler {
 	})
 }
 
-func New(cfg config.Config, db *utils.Database, callbackFn notif.NotificationCallback) (*server, error) {
+func New(cfg config.Config, db *utils.Database, callbackFn notification.NotificationCallback) (*server, error) {
 	srv := &server{
 		isEnabled:  cfg.UI.Enabled,
 		port:       cfg.UI.Port,
@@ -134,11 +134,11 @@ func (c *server) Enabled() bool {
 	return c.isEnabled
 }
 
-func (c *server) Notify(n notif.Notification) {
+func (c *server) Notify(n notification.Notification) {
 	var err error
 
 	switch n.Type {
-	case notif.NotificationTypeStartup:
+	case notification.NotificationTypeStartup:
 		c.currentChildProcessID = n.ChildProccessID
 		err = c.sendRunEvent(n)
 	default:
@@ -149,7 +149,7 @@ func (c *server) Notify(n notif.Notification) {
 	}
 }
 
-func (c *server) sendLogEvent(n notif.Notification) error {
+func (c *server) sendLogEvent(n notification.Notification) error {
 	buffer := bytes.Buffer{}
 	err := Event(&n).Render(context.Background(), &buffer)
 	if err != nil {
@@ -173,7 +173,7 @@ func (c *server) sendLogEvent(n notif.Notification) error {
 	return nil
 }
 
-func (c *server) sendRunEvent(n notif.Notification) error {
+func (c *server) sendRunEvent(n notification.Notification) error {
 	buffer := bytes.Buffer{}
 	err := EmptyRun(n.ChildProccessID).Render(context.Background(), &buffer)
 	if err != nil {
@@ -216,22 +216,22 @@ func (c *server) sendRunEvent(n notif.Notification) error {
 }
 
 func (c *server) restartActionHandler(w http.ResponseWriter, r *http.Request) {
-	c.callbackFn(notif.Notification{
-		ID:              notif.NextID(),
+	c.callbackFn(notification.Notification{
+		ID:              notification.NextID(),
 		Date:            time.Now(),
 		ChildProccessID: c.currentChildProcessID,
-		Type:            notif.NotificationTypeHardRestartRequested,
+		Type:            notification.NotificationTypeHardRestartRequested,
 		Message:         "webui",
 	})
 	w.WriteHeader(http.StatusOK)
 }
 
 func (c *server) exitActionHandler(w http.ResponseWriter, r *http.Request) {
-	c.callbackFn(notif.Notification{
-		ID:              notif.NextID(),
+	c.callbackFn(notification.Notification{
+		ID:              notification.NextID(),
 		Date:            time.Now(),
 		ChildProccessID: c.currentChildProcessID,
-		Type:            notif.NotificationTypeShutdownRequested,
+		Type:            notification.NotificationTypeShutdownRequested,
 		Message:         "webui",
 	})
 	w.WriteHeader(http.StatusOK)

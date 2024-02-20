@@ -26,9 +26,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
-	"time"
 
-	ipc "github.com/jdudmesh/gomon-ipc"
 	"github.com/jdudmesh/gomon/internal/config"
 	"github.com/jdudmesh/gomon/internal/console"
 	"github.com/jdudmesh/gomon/internal/notification"
@@ -101,8 +99,8 @@ func main() {
 		db.Close()
 	}()
 
-	mainCtx, mainCtxCancel := context.WithCancel(context.Background())
-	defer mainCtxCancel()
+	ctx, ctxCancel := context.WithCancel(context.Background())
+	defer ctxCancel()
 
 	hardRestart := make(chan string)
 	softRestart := make(chan string)
@@ -125,7 +123,7 @@ func main() {
 			err = proxy.Start()
 			if err != nil {
 				log.Errorf("starting proxy: %v", err)
-				mainCtxCancel()
+				ctxCancel()
 			}
 		}()
 	}
@@ -138,7 +136,7 @@ func main() {
 		case notification.NotificationTypeSoftRestartRequested:
 			softRestart <- "webui"
 		case notification.NotificationTypeShutdownRequested:
-			mainCtxCancel()
+			ctxCancel()
 		}
 	})
 
@@ -153,7 +151,7 @@ func main() {
 			err := webui.Start()
 			if err != nil {
 				log.Errorf("starting web UI: %v", err)
-				mainCtxCancel()
+				ctxCancel()
 			}
 		}()
 	}
@@ -178,7 +176,7 @@ func main() {
 		})
 		if err != nil {
 			log.Errorf("starting console: %v", err)
-			mainCtxCancel()
+			ctxCancel()
 		}
 	}()
 
@@ -197,7 +195,7 @@ func main() {
 		})
 		if err != nil {
 			log.Errorf("starting IPC server: %v", err)
-			mainCtxCancel()
+			ctxCancel()
 		}
 	}()
 
@@ -222,7 +220,7 @@ func main() {
 		})
 		if err != nil {
 			log.Errorf("running monitor: %v", err)
-			mainCtxCancel()
+			ctxCancel()
 		}
 	}()
 
@@ -241,7 +239,7 @@ func main() {
 				hardRestart <- "sigusr1"
 			case syscall.SIGINT, syscall.SIGTERM:
 				log.Info("received term signal, exiting")
-				mainCtxCancel()
+				ctxCancel()
 			}
 		}
 	}()
@@ -254,7 +252,8 @@ func main() {
 	childProcess := process.AtomicChildProcess{}
 	childProcess.Store(nil)
 	go func() {
-		for mainCtx.Err() == nil {
+		// keep restarting the child process until the main context is cancelled (terminated by the user or an error occurs)
+		for ctx.Err() == nil {
 			proc, err := process.NewChildProcess(cfg)
 			if err != nil {
 				log.Fatalf("creating child process: %v", err)
@@ -262,16 +261,13 @@ func main() {
 
 			childProcess.Store(proc)
 
-			proc.Start(mainCtx, consoleWriter, func(n notification.Notification) {
+			// TODO: is ok to pass the main context here?
+			proc.Start(ctx, consoleWriter, func(n notification.Notification) {
 				db.LogNotification(n)
 				consoleWriter.Notify(n)
 				proxy.Notify(n)
 				webui.Notify(n)
 			})
-
-			if mainCtx.Err() != nil {
-				break
-			}
 		}
 	}()
 
@@ -291,19 +287,13 @@ func main() {
 				if err != nil {
 					log.Warnf("notifying child process: %v", err)
 				}
-			case <-mainCtx.Done():
+			case <-ctx.Done():
 				return
 			}
 		}
 	}()
 
-	<-mainCtx.Done()
-}
-
-func sendSoftRestart(ipcServer ipc.Connection, hint string) error {
-	ctx, cancelFn := context.WithTimeout(context.Background(), time.Second)
-	defer cancelFn()
-	return ipcServer.Write(ctx, []byte(hint))
+	<-ctx.Done()
 }
 
 func loadConfig() (config.Config, error) {

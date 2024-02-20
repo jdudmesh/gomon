@@ -1,10 +1,27 @@
 package process
 
+// gomon is a simple command line tool that watches your files and automatically restarts the application when it detects any changes in the working directory.
+// Copyright (C) 2023 John Dudmesh
+
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 import (
 	"bufio"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
@@ -18,6 +35,40 @@ import (
 	"github.com/jdudmesh/gomon/internal/utils"
 	log "github.com/sirupsen/logrus"
 )
+
+type ChildProcess interface {
+	HardRestart(string) error
+	SoftRestart(string) error
+	RunOutOfBandTask(string) error
+	Start() error
+	Close() error
+	AddEventConsumer(sink notification.EventConsumer)
+}
+
+const (
+	ForceHardRestart = "__hard_reload"
+	ForceSoftRestart = "__soft_reload"
+)
+
+type ConsoleOutput interface {
+	Stdout() io.Writer
+	Stderr() io.Writer
+}
+
+type processState int64
+
+const (
+	processStateStopped processState = iota
+	processStateStarting
+	processStateStarted
+	processStateStopping
+	processStateClosing
+	processStateClosed
+)
+
+const ipcStatusDisconnected = "Disconnected"
+const initialBackoff = 50 * time.Millisecond
+const maxBackoff = 5 * time.Second
 
 type AtomicChildProcess struct {
 	value atomic.Value

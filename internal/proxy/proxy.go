@@ -30,7 +30,7 @@ import (
 	"time"
 
 	"github.com/jdudmesh/gomon/internal/config"
-	notif "github.com/jdudmesh/gomon/internal/notification"
+	"github.com/jdudmesh/gomon/internal/notification"
 	"github.com/r3labs/sse/v2"
 	log "github.com/sirupsen/logrus"
 )
@@ -149,7 +149,7 @@ func (p *webProxy) Close() error {
 	return nil
 }
 
-func (p *webProxy) Notify(n notif.Notification) {
+func (p *webProxy) Notify(n notification.Notification) {
 	if !p.isEnabled {
 		return
 	}
@@ -157,7 +157,7 @@ func (p *webProxy) Notify(n notif.Notification) {
 	defer p.sseServerLock.Unlock()
 
 	switch n.Type {
-	case notif.NotificationTypeHardRestart, notif.NotificationTypeSoftRestart, notif.NotificationTypeStartup, notif.NotificationTypeShutdown:
+	case notification.NotificationTypeHardRestart, notification.NotificationTypeSoftRestart, notification.NotificationTypeStartup, notification.NotificationTypeShutdown:
 		log.Infof("notifying browser: %s", n.Message)
 		p.sseServer.Publish("hmr", &sse.Event{
 			Data: []byte(n.Message),

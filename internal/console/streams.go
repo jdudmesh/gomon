@@ -25,7 +25,6 @@ import (
 
 	"github.com/jdudmesh/gomon/internal/config"
 	"github.com/jdudmesh/gomon/internal/notification"
-	notif "github.com/jdudmesh/gomon/internal/notification"
 	_ "github.com/mattn/go-sqlite3"
 	log "github.com/sirupsen/logrus"
 )
@@ -52,7 +51,7 @@ func New(cfg config.Config) (*streams, error) {
 	return stm, nil
 }
 
-func (s *streams) Serve(callbackFn notif.NotificationCallback) error {
+func (s *streams) Serve(callbackFn notification.NotificationCallback) error {
 	for {
 		select {
 		case line := <-s.stdoutWriter:
@@ -60,7 +59,7 @@ func (s *streams) Serve(callbackFn notif.NotificationCallback) error {
 				os.Stdout.WriteString(line)
 				continue
 			}
-			err := s.write(notif.NotificationTypeStdOut, line, callbackFn)
+			err := s.write(notification.NotificationTypeStdOut, line, callbackFn)
 			if err != nil {
 				log.Errorf("writing stdout: %v", err)
 			}
@@ -69,7 +68,7 @@ func (s *streams) Serve(callbackFn notif.NotificationCallback) error {
 				os.Stderr.WriteString(line)
 				continue
 			}
-			err := s.write(notif.NotificationTypeStdErr, line, callbackFn)
+			err := s.write(notification.NotificationTypeStdErr, line, callbackFn)
 			if err != nil {
 				log.Errorf("writing stderr: %v", err)
 			}
@@ -92,11 +91,11 @@ func (s *streams) Stderr() io.Writer {
 	return &streamWriter{streamConsumer: s.stderrWriter}
 }
 
-func (s *streams) write(logType notif.NotificationType, logData string, callbackFn notif.NotificationCallback) error {
+func (s *streams) write(logType notification.NotificationType, logData string, callbackFn notification.NotificationCallback) error {
 	eventDate := time.Now()
 
 	for _, line := range strings.Split(logData, "\n") {
-		callbackFn(notif.Notification{
+		callbackFn(notification.Notification{
 			ID:              notification.NextID(),
 			Date:            eventDate,
 			ChildProccessID: s.currentChildProcessID,
@@ -108,8 +107,8 @@ func (s *streams) write(logType notif.NotificationType, logData string, callback
 	return nil
 }
 
-func (s *streams) Notify(n notif.Notification) {
-	if n.Type == notif.NotificationTypeStartup {
+func (s *streams) Notify(n notification.Notification) {
+	if n.Type == notification.NotificationTypeStartup {
 		s.currentChildProcessID = n.ChildProccessID
 	}
 }
