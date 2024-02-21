@@ -26,6 +26,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/jdudmesh/gomon/internal/config"
 	"github.com/jdudmesh/gomon/internal/console"
@@ -36,6 +37,7 @@ import (
 	"github.com/jdudmesh/gomon/internal/watcher"
 	"github.com/jdudmesh/gomon/internal/webui"
 	log "github.com/sirupsen/logrus"
+	"gopkg.in/cenkalti/backoff.v1"
 )
 
 const (
@@ -104,6 +106,7 @@ func main() {
 
 	hardRestart := make(chan string)
 	softRestart := make(chan string)
+	oobTask := make(chan string)
 
 	// init the web proxy
 	proxy, err := proxy.New(cfg)
@@ -181,18 +184,18 @@ func main() {
 	}()
 
 	// start the IPC server
-	notifier := notification.NewNotifier()
+	notifier, err := notification.NewNotifier(func(n notification.Notification) {
+		db.LogNotification(n)
+		proxy.Notify(n)
+		webui.Notify(n)
+	})
 	if err != nil {
 		log.Fatalf("creating notifier: %v", err)
 	}
 	defer notifier.Close()
 
 	go func() {
-		err := notifier.Start(func(n notification.Notification) {
-			db.LogNotification(n)
-			proxy.Notify(n)
-			webui.Notify(n)
-		})
+		err := notifier.Start()
 		if err != nil {
 			log.Errorf("starting IPC server: %v", err)
 			ctxCancel()
@@ -215,6 +218,8 @@ func main() {
 				hardRestart <- n.Message
 			case notification.NotificationTypeSoftRestartRequested:
 				softRestart <- n.Message
+			case notification.NotificationTypeOOBTaskRequested:
+				oobTask <- n.Message
 			}
 			proxy.Notify(n)
 		})
@@ -226,7 +231,6 @@ func main() {
 
 	// listen for quit signal
 	sigint := make(chan os.Signal, 1)
-	defer close(sigint)
 	go func() {
 		signal.Notify(sigint, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGUSR1)
 		for s := range sigint {
@@ -261,13 +265,26 @@ func main() {
 
 			childProcess.Store(proc)
 
-			// TODO: is ok to pass the main context here?
-			proc.Start(ctx, consoleWriter, func(n notification.Notification) {
-				db.LogNotification(n)
-				consoleWriter.Notify(n)
-				proxy.Notify(n)
-				webui.Notify(n)
-			})
+			backoffPolicy := backoff.NewExponentialBackOff()
+			backoffPolicy.InitialInterval = 500 * time.Millisecond
+			backoffPolicy.MaxInterval = 5000 * time.Millisecond
+			backoffPolicy.MaxElapsedTime = 60 * time.Second
+
+			err = backoff.Retry(func() error {
+				// TODO: is ok to pass the main context here?
+				return proc.Start(ctx, consoleWriter, func(n notification.Notification) {
+					db.LogNotification(n)
+					consoleWriter.Notify(n)
+					proxy.Notify(n)
+					webui.Notify(n)
+				})
+			}, backoffPolicy)
+
+			if err != nil {
+				log.Errorf("failed retrying child process: %v", err)
+				ctxCancel()
+				return
+			}
 		}
 	}()
 
@@ -286,6 +303,15 @@ func main() {
 				err := notifier.Notify(hint)
 				if err != nil {
 					log.Warnf("notifying child process: %v", err)
+				}
+			case task := <-oobTask:
+				log.Info("out of band task: " + task)
+				proc := childProcess.Load()
+				if proc != nil {
+					proc.ExecuteOOBTask(task, func(n notification.Notification) {
+						db.LogNotification(n)
+						consoleWriter.Notify(n)
+					})
 				}
 			case <-ctx.Done():
 				return

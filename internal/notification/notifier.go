@@ -25,24 +25,33 @@ import (
 	ipc "github.com/jdudmesh/gomon-ipc"
 )
 
+const SoftRestartMessage = "__soft_reload"
+
 type Notifier struct {
-	ipcServer ipc.Connection
+	ipcServer  ipc.Connection
+	callbackFn NotificationCallback
 }
 
-func NewNotifier() *Notifier {
-	return &Notifier{
-		ipcServer: ipc.NewConnection(ipc.ServerConnection),
+func NewNotifier(callbackFn NotificationCallback) (*Notifier, error) {
+	n := &Notifier{
+		callbackFn: callbackFn,
 	}
+	ipcServer, err := ipc.NewConnection(ipc.ServerConnection, ipc.WithReadHandler(n.handleInboundMessage))
+	if err != nil {
+		return nil, fmt.Errorf("creating IPC server: %w", err)
+	}
+	n.ipcServer = ipcServer
+	return n, nil
 }
 
-func (n *Notifier) Start(callbackFn NotificationCallback) error {
+func (n *Notifier) Start() error {
 	ctx, cancelFn := context.WithCancel(context.Background())
 	defer cancelFn()
 
 	err := n.ipcServer.ListenAndServe(ctx, func(state ipc.ConnectionState) error {
 		switch state {
 		case ipc.Connected:
-			callbackFn(Notification{
+			n.callbackFn(Notification{
 				Type:    NotificationTypeIPC,
 				Message: "child process connected",
 			})
@@ -72,5 +81,22 @@ func (n *Notifier) Notify(msg string) error {
 	if err != nil {
 		return fmt.Errorf("writing to IPC server: %w", err)
 	}
+	return nil
+}
+
+func (n *Notifier) handleInboundMessage(data []byte) error {
+	msg := string(data)
+	if len(msg) == 0 {
+		return nil
+	}
+	switch msg {
+	case SoftRestartMessage:
+		n.callbackFn(Notification{
+			Type:    NotificationTypeSoftRestart,
+			Message: "soft restart completed",
+		})
+
+	}
+
 	return nil
 }

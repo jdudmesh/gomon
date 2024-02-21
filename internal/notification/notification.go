@@ -15,6 +15,7 @@ const (
 	NotificationTypeSystemError NotificationType = iota
 	NotificationTypeSoftRestartRequested
 	NotificationTypeHardRestartRequested
+	NotificationTypeOOBTaskRequested
 	NotificationTypeShutdownRequested
 	NotificationTypeSystemShutdown
 	NotificationTypeStartup

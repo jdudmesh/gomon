@@ -36,14 +36,14 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-type ChildProcess interface {
-	HardRestart(string) error
-	SoftRestart(string) error
-	RunOutOfBandTask(string) error
-	Start() error
-	Close() error
-	AddEventConsumer(sink notification.EventConsumer)
-}
+// type ChildProcess interface {
+// 	HardRestart(string) error
+// 	SoftRestart(string) error
+// 	ExecuteOOBTask(string) error
+// 	Start() error
+// 	Close() error
+// 	AddEventConsumer(sink notification.EventConsumer)
+// }
 
 const (
 	ForceHardRestart = "__hard_reload"
@@ -104,6 +104,7 @@ type childProcess struct {
 	termChild      chan struct{}
 	killChild      chan struct{}
 	killTimeout    time.Duration
+	childProcessID string
 }
 
 func NewChildProcess(cfg config.Config) (*childProcess, error) {
@@ -147,11 +148,11 @@ func (c *childProcess) Start(ctx context.Context, console ConsoleOutput, callbac
 		return errors.New("process is already running")
 	}
 
-	childProcessID := notification.NextID()
+	c.childProcessID = notification.NextID()
 
+	// run prestart tasks
 	for _, task := range c.prestart {
-		oobTask := NewOutOfBandTask(c.rootDirectory, task, c.envVars)
-		err := oobTask.Run(childProcessID, callbackFn)
+		err := c.ExecuteOOBTask(task, callbackFn)
 		if err != nil {
 			return fmt.Errorf("running prestart task: %w", err)
 		}
@@ -159,8 +160,8 @@ func (c *childProcess) Start(ctx context.Context, console ConsoleOutput, callbac
 
 	c.state.Set(ProcessStateStarting)
 
-	childContext, cancelChildContext := context.WithCancel(ctx)
-	defer cancelChildContext()
+	childCtx, cancelChildCtx := context.WithCancel(ctx)
+	defer cancelChildCtx()
 
 	args := c.command[1:]
 	if len(c.entrypoint) > 0 {
@@ -170,7 +171,8 @@ func (c *childProcess) Start(ctx context.Context, console ConsoleOutput, callbac
 		}
 	}
 
-	cmd := exec.CommandContext(childContext, c.command[0], args...)
+	// create and start the child process
+	cmd := exec.CommandContext(childCtx, c.command[0], args...)
 	cmd.Dir = c.rootDirectory
 	cmd.Stdout = console.Stdout()
 	cmd.Stderr = console.Stderr()
@@ -187,13 +189,15 @@ func (c *childProcess) Start(ctx context.Context, console ConsoleOutput, callbac
 
 	callbackFn(notification.Notification{
 		ID:              notification.NextID(),
-		ChildProccessID: childProcessID,
+		ChildProccessID: c.childProcessID,
 		Date:            time.Now(),
 		Type:            notification.NotificationTypeStartup,
 		Message:         "process started",
 	})
 
-	exitStatus := make(chan int)
+	// wait for the child process to exit, putting the exit code into the exitWait channel
+	// allows us to wait for multiple triggers (signals or process exit)
+	exitWait := make(chan int)
 	go func() {
 		err = cmd.Wait()
 		if err != nil && !(err.Error() != "signal: terminated" || err.Error() != "signal: killed") {
@@ -204,23 +208,28 @@ func (c *childProcess) Start(ctx context.Context, console ConsoleOutput, callbac
 		if s > 0 {
 			log.Warnf("child process exited with non-zero status: %d", cmd.ProcessState.ExitCode())
 		}
-		exitStatus <- s
+		exitWait <- s
 	}()
 
+	// this loop waits for the child process to exit (using the exitWait channel), or for a signal to stop it
+	var exitCode int
 event_loop:
 	for {
 		select {
 		case <-c.termChild:
+			// graceful shutdown (Windows (non-Posix) clients will not receive this signal)
 			log.Info("stopping child process: terminate requested")
+			// confusingly, the syscall.Kill function sends a TERMINATE signal
 			err := syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
 			if err != nil {
 				return err
 			}
 		case <-c.killChild:
+			// hard shutdown
 			log.Info("stopping child process: close requested")
-			cancelChildContext()
-		case s := <-exitStatus:
-			log.Infof("child process exited with status: %d", s)
+			cancelChildCtx()
+		case exitCode = <-exitWait:
+			log.Infof("child process exited with status: %d", exitCode)
 			break event_loop
 		}
 	}
@@ -229,11 +238,15 @@ event_loop:
 
 	callbackFn(notification.Notification{
 		ID:              notification.NextID(),
-		ChildProccessID: childProcessID,
+		ChildProccessID: c.childProcessID,
 		Date:            time.Now(),
 		Type:            notification.NotificationTypeShutdown,
-		Message:         "process stopped",
+		Message:         fmt.Sprintf("process stopped: exit code %d", exitCode),
 	})
+
+	if exitCode > 0 {
+		return fmt.Errorf("child process exited with status: %d", exitCode)
+	}
 
 	return nil
 }
@@ -264,4 +277,10 @@ func (c *childProcess) loadEnvFile(filename string) error {
 	}
 
 	return nil
+}
+
+func (c *childProcess) ExecuteOOBTask(task string, callbackFn notification.NotificationCallback) error {
+	oobTask := NewOutOfBandTask(c.rootDirectory, task, c.envVars)
+	err := oobTask.Run(c.childProcessID, callbackFn)
+	return err
 }

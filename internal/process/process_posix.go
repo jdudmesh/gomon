@@ -35,20 +35,25 @@ func (c *childProcess) Stop() error {
 	}
 
 	c.state.Set(ProcessStateStopping)
-	close(c.termChild)
 
 	isChildClosed := make(chan struct{})
 	go func() {
+		// wait for the child process to close by trying capture lock, will have been locked in the Start method
 		c.childLock.Lock()
 		defer c.childLock.Unlock()
-		close(isChildClosed)
+		// signal that the child process has closed
+		isChildClosed <- struct{}{}
 	}()
 
+	// send the signal to the child process to close
+	c.termChild <- struct{}{}
+
+	// wait for the child process to close or timeout
 	select {
 	case <-isChildClosed:
 		log.Info("child process closed")
 	case <-time.After(c.killTimeout):
-		close(c.killChild)
+		c.killChild <- struct{}{}
 	}
 
 	return nil

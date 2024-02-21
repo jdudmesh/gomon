@@ -26,7 +26,7 @@ type dummyProcess struct {
 	childOuterRunWait sync.WaitGroup
 }
 
-func NewDummy() ChildProcess {
+func NewDummy() *dummyProcess {
 	return &dummyProcess{
 		childOuterRunWait: sync.WaitGroup{},
 	}
@@ -53,6 +53,6 @@ func (d *dummyProcess) SoftRestart(string) error {
 	return nil
 }
 
-func (d *dummyProcess) RunOutOfBandTask(string) error {
+func (d *dummyProcess) ExecuteOOBTask(string) error {
 	return nil
 }

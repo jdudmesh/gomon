@@ -9,6 +9,7 @@ For example usage see [this example](https://github.com/jdudmesh/gomon-example)
 ## Key features
 
 - `go run` a project and force hard restart based on file changes defined by a list of file extensions (typically `*.go`)
+- if the process fails to start then it is restarted using an exponential backoff strategy for up to 1 minute
 - alternatively specify a different initial command
 - perform a soft restart (e.g. reload templates) based on a file changes defined by second list of file extensions (typically `*.html`)
 - ignore file changes in specified directories (e.g. `vendor`)
@@ -46,7 +47,7 @@ This will simply `go run` your project and restart on changes to `*.go` files.
 
 `gomon` supports a number of command line parameters:
 
-```
+```bash
 --conf       - specify a config file (see below)
 --dir        - use an alternative root directory
 --env        - a comma separated list of environment variable files to load e.g. .env,.env.local
@@ -67,7 +68,7 @@ If a config file is specified, or one is found in the working directory, then th
 
 The config file is a YAML file as follows:
 
-````yaml
+```yaml
 command: <optional array for command to run instead of `["go", "run"]`>
 entrypoint:
 entrypointArgs:
@@ -107,9 +108,10 @@ proxy:
 ui:
   enabled: true
 	port: 4001
+```
 
 ## Web UI
-`gomon` now supports a (currently) barebones Web UI which displays captured console output. The aim is to make this fully searchable and to pretty print JSON logs where possible.
+`gomon` now supports a Web UI which displays captured console output. The aim is to make this fully searchable and to pretty print JSON logs where possible.
 
 To enable ass the `ui` key to the config and set `enabled` to `true`. By default the UI listens on port 4001 but you can change it in the config. All log events are stored in a SQLITE database in a `.gomon` folder in the target project. This means that the output of previous runs of the code persists and can be searched. Don't forget to put `.gomon` in your `.gitignore` file.
 
@@ -119,41 +121,45 @@ If your project contains Go HTML templates then you can reload them by defining 
 
 For example:
 ```go
-import (
-	"fmt"
-	"net/http"
-	"os"
+package main
 
-	templates "github.com/jdudmesh/gomon-client"
+import (
+	"net/http"
+
+	client "github.com/jdudmesh/gomon-client"
 	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v4/middleware"
+	"github.com/labstack/gommon/log"
 )
 
 func main() {
-	e := echo.New()
-	e.Static("/assets", "./static")
+	log.Info("starting server")
 
-	t, err := templates.NewEcho("views/*.html", e.Logger)
+	e := echo.New()
+	e.Use(middleware.Logger())
+	e.Use(middleware.Recover())
+
+	t, err := client.NewEcho("./views/*html")
 	if err != nil {
-		fmt.Println(err)
-		os.Exit(1)
+		log.Fatal(err)
 	}
 	defer t.Close()
-	if err := t.Run(); err != nil {
-		panic(err)
-	}
+
+	go func() {
+		err := t.ListenAndServe()
+		if err != nil {
+			log.Error(err)
+		}
+	}()
 
 	e.Renderer = t
 
 	e.GET("/", func(c echo.Context) error {
-		return c.Render(http.StatusOK, "index.html", nil)
+		return c.Render(http.StatusOK, "index.html", "World")
 	})
 
-	if p, ok := os.LookupEnv("PORT"); ok {
-		e.Logger.Fatal(e.Start(":" + p))
-	} else {
-		e.Logger.Fatal(e.Start(":8080"))
-	}
+	e.Logger.Fatal(e.Start(":8080"))
 }
-````
+```
 
 At the moment on a generic reloader and Labstack Echo are supported. Please raise an issue if you would like other support added for other frameworks.

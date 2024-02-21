@@ -32,7 +32,7 @@ func (c *childProcess2) Stop() error {
 	}
 
 	c.state.Set(ProcessStateStopping)
-	close(c.killChild)
+	c.killChild <- struct{}{}
 
 	c.childLock.Lock()
 	defer c.childLock.Unlock()

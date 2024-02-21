@@ -153,7 +153,8 @@ func (w *filesystemWatcher) processFileChange(event fsnotify.Event, callbackFn n
 		if match, _ := filepath.Match(patt, filepath.Base(filePath)); match {
 			log.Infof("generated file source: %s", relPath)
 			for _, task := range generated {
-				if task == process.ForceHardRestart {
+				switch task {
+				case process.ForceHardRestart:
 					callbackFn(notification.Notification{
 						ID:              notification.NextID(),
 						ChildProccessID: "",
@@ -161,9 +162,7 @@ func (w *filesystemWatcher) processFileChange(event fsnotify.Event, callbackFn n
 						Type:            notification.NotificationTypeHardRestartRequested,
 						Message:         relPath,
 					})
-					continue
-				}
-				if task == process.ForceSoftRestart {
+				case process.ForceSoftRestart:
 					callbackFn(notification.Notification{
 						ID:              notification.NextID(),
 						ChildProccessID: "",
@@ -171,13 +170,15 @@ func (w *filesystemWatcher) processFileChange(event fsnotify.Event, callbackFn n
 						Type:            notification.NotificationTypeSoftRestartRequested,
 						Message:         relPath,
 					})
-					continue
+				default:
+					callbackFn(notification.Notification{
+						ID:              notification.NextID(),
+						ChildProccessID: "",
+						Date:            time.Now(),
+						Type:            notification.NotificationTypeOOBTaskRequested,
+						Message:         task,
+					})
 				}
-				// TODO - implement out of band task
-				// err := w.childProcess.RunOutOfBandTask(task)
-				// if err != nil {
-				// 	log.Errorf("running generated task: %+v", err)
-				// }
 			}
 		}
 		return
