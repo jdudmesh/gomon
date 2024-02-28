@@ -8,7 +8,7 @@ require (
 	github.com/a-h/templ v0.2.543
 	github.com/bwmarrin/snowflake v0.3.0
 	github.com/fsnotify/fsnotify v1.7.0
-	github.com/jdudmesh/gomon-ipc v0.1.0
+	github.com/jdudmesh/gomon-ipc v0.1.1
 	github.com/jmoiron/sqlx v1.3.5
 	github.com/mattn/go-sqlite3 v1.14.22
 	github.com/r3labs/sse/v2 v2.10.0

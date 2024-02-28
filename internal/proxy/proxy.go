@@ -157,7 +157,7 @@ func (p *webProxy) Notify(n notification.Notification) {
 	defer p.sseServerLock.Unlock()
 
 	switch n.Type {
-	case notification.NotificationTypeHardRestart, notification.NotificationTypeSoftRestart, notification.NotificationTypeStartup, notification.NotificationTypeShutdown:
+	case notification.NotificationTypeHardRestart, notification.NotificationTypeSoftRestart, notification.NotificationTypeIPC:
 		log.Infof("notifying browser: %s", n.Message)
 		p.sseServer.Publish("hmr", &sse.Event{
 			Data: []byte(n.Message),

@@ -277,6 +277,7 @@ func main() {
 					consoleWriter.Notify(n)
 					proxy.Notify(n)
 					webui.Notify(n)
+					notifier.Notify(n)
 				})
 			}, backoffPolicy)
 
@@ -300,7 +301,7 @@ func main() {
 				}
 			case hint := <-softRestart:
 				log.Info("soft restart: " + hint)
-				err := notifier.Notify(hint)
+				err := notifier.SendSoftRestart(hint)
 				if err != nil {
 					log.Warnf("notifying child process: %v", err)
 				}

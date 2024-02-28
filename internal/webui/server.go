@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/a-h/templ"
@@ -50,6 +51,7 @@ type server struct {
 	db                    *utils.Database
 	callbackFn            notification.NotificationCallback
 	currentChildProcessID string
+	notificationLock      sync.Mutex
 }
 
 func withCORS(next http.Handler) http.Handler {
@@ -62,10 +64,11 @@ func withCORS(next http.Handler) http.Handler {
 
 func New(cfg config.Config, db *utils.Database, callbackFn notification.NotificationCallback) (*server, error) {
 	srv := &server{
-		isEnabled:  cfg.UI.Enabled,
-		port:       cfg.UI.Port,
-		db:         db,
-		callbackFn: callbackFn,
+		isEnabled:        cfg.UI.Enabled,
+		port:             cfg.UI.Port,
+		db:               db,
+		callbackFn:       callbackFn,
+		notificationLock: sync.Mutex{},
 	}
 
 	if !srv.isEnabled {
@@ -135,6 +138,9 @@ func (c *server) Enabled() bool {
 }
 
 func (c *server) Notify(n notification.Notification) {
+	c.notificationLock.Lock()
+	defer c.notificationLock.Unlock()
+
 	var err error
 
 	switch n.Type {

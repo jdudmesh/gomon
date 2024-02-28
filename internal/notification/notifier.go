@@ -26,10 +26,12 @@ import (
 )
 
 const SoftRestartMessage = "__soft_reload"
+const HardRestartMessage = "__hard_restart"
 
 type Notifier struct {
-	ipcServer  ipc.Connection
-	callbackFn NotificationCallback
+	ipcServer      ipc.Connection
+	callbackFn     NotificationCallback
+	childProcessID string
 }
 
 func NewNotifier(callbackFn NotificationCallback) (*Notifier, error) {
@@ -52,8 +54,19 @@ func (n *Notifier) Start() error {
 		switch state {
 		case ipc.Connected:
 			n.callbackFn(Notification{
-				Type:    NotificationTypeIPC,
-				Message: "child process connected",
+				ID:              NextID(),
+				Date:            time.Now(),
+				ChildProccessID: n.childProcessID,
+				Type:            NotificationTypeIPC,
+				Message:         "child process connected",
+			})
+		case ipc.Disconnected:
+			n.callbackFn(Notification{
+				ID:              NextID(),
+				Date:            time.Now(),
+				ChildProccessID: n.childProcessID,
+				Type:            NotificationTypeIPC,
+				Message:         "child process disconnected",
 			})
 		}
 		return nil
@@ -69,7 +82,17 @@ func (n *Notifier) Close() error {
 	return n.ipcServer.Close()
 }
 
-func (n *Notifier) Notify(msg string) error {
+func (n *Notifier) Notify(notif Notification) error {
+	if notif.Type != NotificationTypeStartup {
+		return nil
+	}
+
+	n.childProcessID = notif.ChildProccessID
+
+	return nil
+}
+
+func (n *Notifier) SendSoftRestart(hint string) error {
 	if !n.ipcServer.IsConnected() {
 		return errors.New("IPC server is not connected")
 	}
@@ -77,7 +100,7 @@ func (n *Notifier) Notify(msg string) error {
 	ctx, cancelFn := context.WithTimeout(context.Background(), time.Second)
 	defer cancelFn()
 
-	err := n.ipcServer.Write(ctx, []byte(msg))
+	err := n.ipcServer.Write(ctx, []byte(hint))
 	if err != nil {
 		return fmt.Errorf("writing to IPC server: %w", err)
 	}
@@ -90,12 +113,22 @@ func (n *Notifier) handleInboundMessage(data []byte) error {
 		return nil
 	}
 	switch msg {
+	case HardRestartMessage:
+		n.callbackFn(Notification{
+			ID:              NextID(),
+			Date:            time.Now(),
+			ChildProccessID: n.childProcessID,
+			Type:            NotificationTypeHardRestart,
+			Message:         "hard restart completed",
+		})
 	case SoftRestartMessage:
 		n.callbackFn(Notification{
-			Type:    NotificationTypeSoftRestart,
-			Message: "soft restart completed",
+			ID:              NextID(),
+			Date:            time.Now(),
+			ChildProccessID: n.childProcessID,
+			Type:            NotificationTypeSoftRestart,
+			Message:         "soft restart completed",
 		})
-
 	}
 
 	return nil
