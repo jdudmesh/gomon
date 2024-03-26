@@ -155,8 +155,13 @@ func (c *server) Notify(n notification.Notification) error {
 	case notification.NotificationTypeStartup:
 		c.currentChildProcessID = n.ChildProccessID
 		err = c.sendRunEvent(n)
-	default:
+	case notification.NotificationTypeLogEvent,
+		notification.NotificationTypeHardRestart,
+		notification.NotificationTypeSoftRestart,
+		notification.NotificationTypeShutdown:
 		err = c.sendLogEvent(n)
+	default:
+		return nil
 	}
 	if err != nil {
 		return fmt.Errorf("sending log event: %w", err)

@@ -150,7 +150,7 @@ function defaultSSEEventHandler(src: SSEEventSource): EventHandler {
       );
     } catch (e) {
       console.error(e);
-      console.log(JSON.parse((ev as MessageEvent).data))
+      console.log(JSON.parse((ev as MessageEvent).data));
     }
   };
 }
@@ -368,7 +368,7 @@ function _actor(ctx: ActorContext): RetriggerableActor {
     },
     do: (fn: EventHandler) => {
       ctx.actor = async (ev: Event | null) => {
-        if(!ev) return;
+        if (!ev) return;
         new Promise((resolve) => {
           fn(ev);
           resolve(null);

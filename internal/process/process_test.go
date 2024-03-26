@@ -17,7 +17,6 @@ package process
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import (
-	"context"
 	"io"
 	"os"
 	"testing"
@@ -47,9 +46,6 @@ func TestChildProcess(t *testing.T) {
 		t.Fatalf("error creating child process: %v", err)
 	}
 
-	ctx, cancelFunc := context.WithCancel(context.Background())
-	defer cancelFunc()
-
 	var stopError error
 	go func() {
 		<-time.After(5 * time.Second)
@@ -57,7 +53,7 @@ func TestChildProcess(t *testing.T) {
 		stopError = proc.Stop()
 	}()
 
-	err = proc.Start(ctx, &testConsole{}, func(n notification.Notification) error {
+	err = proc.Start(&testConsole{}, func(n notification.Notification) error {
 		t.Logf("notification: %v", n)
 		return nil
 	})

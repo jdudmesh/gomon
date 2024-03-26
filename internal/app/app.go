@@ -137,6 +137,11 @@ func New(cfg config.Config) (*App, error) {
 }
 
 func (a *App) Close() {
+	proc := a.childProcess.Load()
+	if proc != nil {
+		proc.Stop()
+	}
+
 	if a.db != nil {
 		a.db.Close()
 	}
@@ -199,30 +204,26 @@ func (a *App) RunWebUI() error {
 	return nil
 }
 
-func (a *App) RunChildProcess(ctx context.Context, cfg config.Config) error {
-	// keep restarting the child process until the main context is cancelled (terminated by the user or an error occurs)
-	for ctx.Err() == nil {
-		proc, err := process.NewChildProcess(cfg)
-		if err != nil {
-			log.Fatalf("creating child process: %v", err)
-		}
+func (a *App) RunChildProcess(cfg config.Config) error {
+	proc, err := process.NewChildProcess(cfg)
+	if err != nil {
+		log.Fatalf("creating child process: %v", err)
+	}
 
-		a.childProcess.Store(proc)
+	a.childProcess.Store(proc)
 
-		backoffPolicy := backoff.NewExponentialBackOff()
-		backoffPolicy.InitialInterval = 500 * time.Millisecond
-		backoffPolicy.MaxInterval = 5000 * time.Millisecond
-		backoffPolicy.MaxElapsedTime = 60 * time.Second
+	backoffPolicy := backoff.NewExponentialBackOff()
+	backoffPolicy.InitialInterval = 500 * time.Millisecond
+	backoffPolicy.MaxInterval = 5000 * time.Millisecond
+	backoffPolicy.MaxElapsedTime = 60 * time.Second
 
-		err = backoff.Retry(func() error {
-			// TODO: is ok to pass the main context here?
-			return proc.Start(ctx, a.consoleWriter, a.Notify)
-		}, backoffPolicy)
+	err = backoff.Retry(func() error {
+		return proc.Start(a.consoleWriter, a.Notify)
+	}, backoffPolicy)
 
-		if err != nil {
-			log.Errorf("failed retrying child process: %v", err)
-			return err
-		}
+	if err != nil {
+		log.Errorf("failed retrying child process: %v", err)
+		return err
 	}
 
 	return nil
@@ -267,7 +268,7 @@ func (a *App) ProcessSignals() error {
 			a.hardRestart <- "sigusr1"
 		case syscall.SIGINT, syscall.SIGTERM:
 			log.Info("received term signal, exiting")
-			return errors.New("received term signal")
+			return errors.New("shutdown requested")
 		}
 	}
 	return nil

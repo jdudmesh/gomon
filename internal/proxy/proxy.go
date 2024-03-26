@@ -138,6 +138,7 @@ func (p *webProxy) Start() error {
 }
 
 func (p *webProxy) Close() error {
+	log.Info("closing web proxy")
 	if p.sseServer != nil {
 		p.sseServer.Close()
 	}

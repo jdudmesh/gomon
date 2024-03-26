@@ -127,9 +127,12 @@ func main() {
 
 	// this is the main process loop, just keep restarting the child process until the main context is cancelled or an error occurs
 	go func() {
-		err := app.RunChildProcess(ctx, cfg)
-		if err != nil {
-			ctxCancel()
+		// keep restarting the child process until the main context is cancelled (terminated by the user or an error occurs)
+		for ctx.Err() == nil {
+			err := app.RunChildProcess(cfg)
+			if err != nil {
+				ctxCancel()
+			}
 		}
 	}()
 

@@ -67,7 +67,7 @@ func New(cfg config.Config, opts ...HotReloaderOption) (*filesystemWatcher, erro
 
 func (w *filesystemWatcher) Close() error {
 	if w.watcher != nil {
-		log.Info("terminating file watcher")
+		log.Info("closing file watcher")
 		err := w.watcher.Close()
 		if err != nil {
 			return fmt.Errorf("closing watcher: %w", err)

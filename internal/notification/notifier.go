@@ -23,6 +23,7 @@ import (
 	"time"
 
 	ipc "github.com/jdudmesh/gomon-ipc"
+	log "github.com/sirupsen/logrus"
 )
 
 const SoftRestartMessage = "__soft_reload"
@@ -79,6 +80,7 @@ func (n *Notifier) Start() error {
 }
 
 func (n *Notifier) Close() error {
+	log.Info("closing IPC server")
 	return n.ipcServer.Close()
 }
 

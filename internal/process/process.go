@@ -140,7 +140,7 @@ func NewChildProcess(cfg config.Config) (*childProcess, error) {
 	return proc, nil
 }
 
-func (c *childProcess) Start(ctx context.Context, console ConsoleOutput, callbackFn notification.NotificationCallback) error {
+func (c *childProcess) Start(console ConsoleOutput, callbackFn notification.NotificationCallback) error {
 	c.childLock.Lock()
 	defer c.childLock.Unlock()
 
@@ -160,7 +160,7 @@ func (c *childProcess) Start(ctx context.Context, console ConsoleOutput, callbac
 
 	c.state.Set(ProcessStateStarting)
 
-	childCtx, cancelChildCtx := context.WithCancel(ctx)
+	childCtx, cancelChildCtx := context.WithCancel(context.Background())
 	defer cancelChildCtx()
 
 	args := c.command[1:]
