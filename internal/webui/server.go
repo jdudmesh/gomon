@@ -142,6 +142,10 @@ func (c *server) Enabled() bool {
 }
 
 func (c *server) Notify(n notification.Notification) error {
+	if n.ChildProccessID == "" {
+		return nil
+	}
+
 	c.notificationLock.Lock()
 	defer c.notificationLock.Unlock()
 

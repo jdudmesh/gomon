@@ -191,7 +191,7 @@ func Event(n *notification.Notification) templ.Component {
 			if err != nil {
 				return err
 			}
-			_, err = templBuffer.WriteString("</div><div class=\"break-all grow { col }\">")
+			_, err = templBuffer.WriteString("</div><div class=\"break-all grow flex flex-row { col }\"><div class=\"log-text\">")
 			if err != nil {
 				return err
 			}
@@ -200,7 +200,7 @@ func Event(n *notification.Notification) templ.Component {
 			if err != nil {
 				return err
 			}
-			_, err = templBuffer.WriteString("</div></div>")
+			_, err = templBuffer.WriteString("</div><div class=\"cursor-pointer entry-button\"><svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 16 16\" fill=\"currentColor\" class=\"w-4 h-4\"><path d=\"M6.25 8.75v-1h-1a.75.75 0 0 1 0-1.5h1v-1a.75.75 0 0 1 1.5 0v1h1a.75.75 0 0 1 0 1.5h-1v1a.75.75 0 0 1-1.5 0Z\"></path><path fill-rule=\"evenodd\" d=\"M7 12c1.11 0 2.136-.362 2.965-.974l2.755 2.754a.75.75 0 1 0 1.06-1.06l-2.754-2.755A5 5 0 1 0 7 12Zm0-1.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z\" clip-rule=\"evenodd\"></path></svg></div></div></div>")
 			if err != nil {
 				return err
 			}
@@ -214,7 +214,7 @@ func Event(n *notification.Notification) templ.Component {
 			if err != nil {
 				return err
 			}
-			_, err = templBuffer.WriteString("</div><div class=\"break-all grow\">")
+			_, err = templBuffer.WriteString("</div><div class=\"break-all grow flex flex-row\"><div class=\"log-text\">")
 			if err != nil {
 				return err
 			}
@@ -223,7 +223,7 @@ func Event(n *notification.Notification) templ.Component {
 			if err != nil {
 				return err
 			}
-			_, err = templBuffer.WriteString("</div></div>")
+			_, err = templBuffer.WriteString("</div><div class=\"cursor-pointer entry-button\"><svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 16 16\" fill=\"currentColor\" class=\"w-4 h-4\"><path d=\"M6.25 8.75v-1h-1a.75.75 0 0 1 0-1.5h1v-1a.75.75 0 0 1 1.5 0v1h1a.75.75 0 0 1 0 1.5h-1v1a.75.75 0 0 1-1.5 0Z\"></path><path fill-rule=\"evenodd\" d=\"M7 12c1.11 0 2.136-.362 2.965-.974l2.755 2.754a.75.75 0 1 0 1.06-1.06l-2.754-2.755A5 5 0 1 0 7 12Zm0-1.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z\" clip-rule=\"evenodd\"></path></svg></div></div></div>")
 			if err != nil {
 				return err
 			}

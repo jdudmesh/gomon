@@ -60,6 +60,7 @@ export interface Target {
 export interface Actor {
   get: (url: Path) => SwappableTarget;
   post: (url: Path) => SwappableTarget;
+  do: (fn: EventHandler) => SwappableTarget;
 }
 
 export interface Retrigger {

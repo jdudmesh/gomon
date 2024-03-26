@@ -83,3 +83,10 @@ const eventSource = kilo()
       appState.model.isShowingConnectionError = false;
     }, 5000);
   });
+
+  function onClickEntry(ev: Event) {
+    const el = ev.target as HTMLElement;
+    console.log(el);
+  }
+
+  actor(".entry-button").on("click").do(onClickEntry);

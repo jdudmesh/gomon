@@ -150,7 +150,7 @@ function defaultSSEEventHandler(src: SSEEventSource): EventHandler {
       );
     } catch (e) {
       console.error(e);
-      console.error(ev);
+      console.log(JSON.parse((ev as MessageEvent).data))
     }
   };
 }
@@ -360,6 +360,19 @@ function _actor(ctx: ActorContext): RetriggerableActor {
       ctx.actor = async (ev: Event | null) => {
         ev?.preventDefault();
         _doRequest(ctx, url, "POST");
+      };
+      return {
+        ..._target(ctx),
+        ..._retrigger(ctx)
+      };
+    },
+    do: (fn: EventHandler) => {
+      ctx.actor = async (ev: Event | null) => {
+        if(!ev) return;
+        new Promise((resolve) => {
+          fn(ev);
+          resolve(null);
+        });
       };
       return {
         ..._target(ctx),
