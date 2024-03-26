@@ -35,23 +35,25 @@ type streams struct {
 	stderrWriter          chan string
 	currentRunID          atomic.Int64
 	currentChildProcessID string
+	callbackFn            notification.NotificationCallback
 }
 
 type streamWriter struct {
 	streamConsumer chan string
 }
 
-func New(cfg config.Config) (*streams, error) {
+func New(cfg config.Config, callbackFn notification.NotificationCallback) (*streams, error) {
 	stm := &streams{
 		enabled:      cfg.UI.Enabled,
 		stdoutWriter: make(chan string),
 		stderrWriter: make(chan string),
+		callbackFn:   callbackFn,
 	}
 
 	return stm, nil
 }
 
-func (s *streams) Serve(callbackFn notification.NotificationCallback) error {
+func (s *streams) Start() error {
 	for {
 		select {
 		case line := <-s.stdoutWriter:
@@ -59,7 +61,7 @@ func (s *streams) Serve(callbackFn notification.NotificationCallback) error {
 				os.Stdout.WriteString(line)
 				continue
 			}
-			err := s.write(notification.NotificationTypeStdOut, line, callbackFn)
+			err := s.write(notification.NotificationTypeStdOut, line, s.callbackFn)
 			if err != nil {
 				log.Errorf("writing stdout: %v", err)
 			}
@@ -68,7 +70,7 @@ func (s *streams) Serve(callbackFn notification.NotificationCallback) error {
 				os.Stderr.WriteString(line)
 				continue
 			}
-			err := s.write(notification.NotificationTypeStdErr, line, callbackFn)
+			err := s.write(notification.NotificationTypeStdErr, line, s.callbackFn)
 			if err != nil {
 				log.Errorf("writing stderr: %v", err)
 			}
@@ -107,10 +109,11 @@ func (s *streams) write(logType notification.NotificationType, logData string, c
 	return nil
 }
 
-func (s *streams) Notify(n notification.Notification) {
+func (s *streams) Notify(n notification.Notification) error {
 	if n.Type == notification.NotificationTypeStartup {
 		s.currentChildProcessID = n.ChildProccessID
 	}
+	return nil
 }
 
 func (w *streamWriter) Write(p []byte) (int, error) {

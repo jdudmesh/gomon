@@ -73,7 +73,7 @@ func (d *Database) Close() error {
 	return d.db.Close()
 }
 
-func (d *Database) LogNotification(n notification.Notification) error {
+func (d *Database) Notify(n notification.Notification) error {
 	_, err := d.db.NamedExec(`
 		INSERT INTO notifs (id, created_at, child_process_id, event_type, event_data)
 		VALUES (:id, :created_at, :child_process_id, :event_type, :event_data)

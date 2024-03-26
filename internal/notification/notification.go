@@ -7,7 +7,7 @@ import (
 	"github.com/bwmarrin/snowflake"
 )
 
-type NotificationCallback func(n Notification)
+type NotificationCallback func(n Notification) error
 
 type NotificationType int
 
@@ -40,7 +40,7 @@ type Notification struct {
 }
 
 type EventConsumer interface {
-	Notify(n Notification)
+	Notify(n Notification) error
 }
 
 var (

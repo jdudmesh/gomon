@@ -149,10 +149,11 @@ func (p *webProxy) Close() error {
 	return nil
 }
 
-func (p *webProxy) Notify(n notification.Notification) {
+func (p *webProxy) Notify(n notification.Notification) error {
 	if !p.isEnabled {
-		return
+		return nil
 	}
+
 	p.sseServerLock.Lock()
 	defer p.sseServerLock.Unlock()
 
@@ -163,6 +164,7 @@ func (p *webProxy) Notify(n notification.Notification) {
 			Data: []byte(n.Message),
 		})
 	}
+	return nil
 }
 
 func (p *webProxy) handleReload(res http.ResponseWriter, req *http.Request) {

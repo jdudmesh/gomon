@@ -30,7 +30,6 @@ import (
 	"github.com/a-h/templ"
 	"github.com/jdudmesh/gomon/internal/config"
 	"github.com/jdudmesh/gomon/internal/notification"
-	"github.com/jdudmesh/gomon/internal/utils"
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/r3labs/sse/v2"
 	log "github.com/sirupsen/logrus"
@@ -43,12 +42,17 @@ type KiloEvent struct {
 	Action string `json:"x-kilo-action"`
 }
 
+type Database interface {
+	FindNotifications(runID, stm, filter string) ([][]*notification.Notification, error)
+	FindRuns() ([]*notification.Notification, error)
+}
+
 type server struct {
 	isEnabled             bool
 	port                  int
 	httpServer            *http.Server
 	sseServer             *sse.Server
-	db                    *utils.Database
+	db                    Database
 	callbackFn            notification.NotificationCallback
 	currentChildProcessID string
 	notificationLock      sync.Mutex
@@ -62,7 +66,7 @@ func withCORS(next http.Handler) http.Handler {
 	})
 }
 
-func New(cfg config.Config, db *utils.Database, callbackFn notification.NotificationCallback) (*server, error) {
+func New(cfg config.Config, db Database, callbackFn notification.NotificationCallback) (*server, error) {
 	srv := &server{
 		isEnabled:        cfg.UI.Enabled,
 		port:             cfg.UI.Port,
@@ -137,7 +141,7 @@ func (c *server) Enabled() bool {
 	return c.isEnabled
 }
 
-func (c *server) Notify(n notification.Notification) {
+func (c *server) Notify(n notification.Notification) error {
 	c.notificationLock.Lock()
 	defer c.notificationLock.Unlock()
 
@@ -151,8 +155,9 @@ func (c *server) Notify(n notification.Notification) {
 		err = c.sendLogEvent(n)
 	}
 	if err != nil {
-		log.Errorf("sending log event: %v", err)
+		return fmt.Errorf("sending log event: %w", err)
 	}
+	return nil
 }
 
 func (c *server) sendLogEvent(n notification.Notification) error {

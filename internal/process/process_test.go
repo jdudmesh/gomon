@@ -57,9 +57,11 @@ func TestChildProcess(t *testing.T) {
 		stopError = proc.Stop()
 	}()
 
-	err = proc.Start(ctx, &testConsole{}, func(n notification.Notification) {
+	err = proc.Start(ctx, &testConsole{}, func(n notification.Notification) error {
 		t.Logf("notification: %v", n)
+		return nil
 	})
+
 	if err != nil {
 		t.Fatalf("error starting child process: %v", err)
 	}

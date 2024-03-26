@@ -22,22 +22,12 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"os/signal"
 	"path/filepath"
 	"strings"
-	"syscall"
-	"time"
 
+	"github.com/jdudmesh/gomon/internal/app"
 	"github.com/jdudmesh/gomon/internal/config"
-	"github.com/jdudmesh/gomon/internal/console"
-	"github.com/jdudmesh/gomon/internal/notification"
-	"github.com/jdudmesh/gomon/internal/process"
-	"github.com/jdudmesh/gomon/internal/proxy"
-	"github.com/jdudmesh/gomon/internal/utils"
-	"github.com/jdudmesh/gomon/internal/watcher"
-	"github.com/jdudmesh/gomon/internal/webui"
 	log "github.com/sirupsen/logrus"
-	"gopkg.in/cenkalti/backoff.v1"
 )
 
 const (
@@ -47,33 +37,6 @@ const (
 	gray   = 37
 )
 
-type logFormatter struct {
-}
-
-func (l *logFormatter) Format(entry *log.Entry) ([]byte, error) {
-	var levelColor int
-	switch entry.Level {
-	case log.DebugLevel, log.TraceLevel:
-		levelColor = gray
-	case log.WarnLevel:
-		levelColor = yellow
-	case log.ErrorLevel, log.FatalLevel, log.PanicLevel:
-		levelColor = red
-	case log.InfoLevel:
-		levelColor = blue
-	default:
-		levelColor = blue
-	}
-
-	entry.Message = strings.TrimSuffix(entry.Message, "\n")
-
-	b := &bytes.Buffer{}
-	fmt.Fprintf(b, "\x1b[%dm%s", levelColor, entry.Message)
-
-	b.WriteByte('\n')
-	return b.Bytes(), nil
-
-}
 func main() {
 	formatter := new(logFormatter)
 	log.SetFormatter(formatter)
@@ -92,91 +55,38 @@ func main() {
 		log.Fatalf("Cannot set working directory: %v", err)
 	}
 
-	db, err := utils.NewDatabase(cfg)
-	if err != nil {
-		log.Fatalf("creating database: %v", err)
-	}
-	defer func() {
-		log.Info("closing database")
-		db.Close()
-	}()
-
+	// create a context that can be used to cancel all the other components
 	ctx, ctxCancel := context.WithCancel(context.Background())
 	defer ctxCancel()
 
-	hardRestart := make(chan string)
-	softRestart := make(chan string)
-	oobTask := make(chan string)
-
-	// init the web proxy
-	proxy, err := proxy.New(cfg)
+	// create the app, this orchestrates all the other components
+	app, err := app.New(cfg)
 	if err != nil {
-		log.Fatalf("creating proxy: %v", err)
+		log.Fatalf("creating app: %v", err)
 	}
+	defer app.Close()
 
-	defer func() {
-		err := proxy.Close()
+	// run the web proxy
+	go func() {
+		err = app.RunProxy()
 		if err != nil {
-			log.Fatalf("stopping proxy: %v", err)
-		}
-	}()
-
-	if proxy.Enabled() {
-		go func() {
-			err = proxy.Start()
-			if err != nil {
-				log.Errorf("starting proxy: %v", err)
-				ctxCancel()
-			}
-		}()
-	}
-
-	webui, err := webui.New(cfg, db, func(n notification.Notification) {
-		db.LogNotification(n)
-		switch n.Type {
-		case notification.NotificationTypeHardRestartRequested:
-			hardRestart <- "webui"
-		case notification.NotificationTypeSoftRestartRequested:
-			softRestart <- "webui"
-		case notification.NotificationTypeShutdownRequested:
+			log.Errorf("starting proxy: %v", err)
 			ctxCancel()
 		}
-	})
-
-	if err != nil {
-		log.Fatalf("creating web UI: %v", err)
-	}
-	defer func() {
-		webui.Close()
 	}()
-	if webui.Enabled() {
-		go func() {
-			err := webui.Start()
-			if err != nil {
-				log.Errorf("starting web UI: %v", err)
-				ctxCancel()
-			}
-		}()
-	}
 
-	// create the console redirector
-	consoleWriter, err := console.New(cfg)
-	if err != nil {
-		log.Fatalf("creating console: %v", err)
-	}
-
-	defer func() {
-		err := consoleWriter.Close()
+	// run the user interface
+	go func() {
+		err := app.RunWebUI()
 		if err != nil {
-			log.Errorf("closing console: %v", err)
+			log.Errorf("starting web UI: %v", err)
+			ctxCancel()
 		}
 	}()
 
+	// start the console
 	go func() {
-		err := consoleWriter.Serve(func(n notification.Notification) {
-			db.LogNotification(n)
-			webui.Notify(n)
-		})
+		err := app.RunConsole()
 		if err != nil {
 			log.Errorf("starting console: %v", err)
 			ctxCancel()
@@ -184,139 +94,42 @@ func main() {
 	}()
 
 	// start the IPC server
-	notifier, err := notification.NewNotifier(func(n notification.Notification) {
-		db.LogNotification(n)
-		proxy.Notify(n)
-		webui.Notify(n)
-	})
-	if err != nil {
-		log.Fatalf("creating notifier: %v", err)
-	}
-	defer notifier.Close()
-
 	go func() {
-		err := notifier.Start()
+		err := app.RunNotifer()
 		if err != nil {
 			log.Errorf("starting IPC server: %v", err)
 			ctxCancel()
 		}
 	}()
 
-	// init the file system watcher/process spawner
-	watcher, err := watcher.New(cfg)
-	if err != nil {
-		log.Fatalf("creating monitor: %v", err)
-	}
-	defer watcher.Close()
-
 	// start listening for file changes
 	go func() {
-		err = watcher.Watch(func(n notification.Notification) {
-			db.LogNotification(n)
-			switch n.Type {
-			case notification.NotificationTypeHardRestartRequested:
-				hardRestart <- n.Message
-			case notification.NotificationTypeSoftRestartRequested:
-				softRestart <- n.Message
-			case notification.NotificationTypeOOBTaskRequested:
-				oobTask <- n.Message
-			}
-			proxy.Notify(n)
-		})
+		err := app.MonitorFileChanges(ctx)
 		if err != nil {
-			log.Errorf("running monitor: %v", err)
 			ctxCancel()
 		}
 	}()
 
-	// listen for quit signal
-	sigint := make(chan os.Signal, 1)
+	// monitor and handle signals
 	go func() {
-		signal.Notify(sigint, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGUSR1)
-		for s := range sigint {
-			switch s {
-			case syscall.SIGHUP:
-				log.Info("received signal, restarting")
-				softRestart <- "sighup"
-			case syscall.SIGUSR1:
-				log.Info("received signal, hard restarting")
-				hardRestart <- "sigusr1"
-			case syscall.SIGINT, syscall.SIGTERM:
-				log.Info("received term signal, exiting")
-				ctxCancel()
-			}
+		err := app.ProcessSignals()
+		if err != nil {
+			ctxCancel()
 		}
 	}()
+
+	// monitor and handle restart events
+	go app.ProcessRestartEvents(ctx)
 
 	// all components should be up and running by now
 	pid := os.Getpid()
 	log.Infof("gomon started with pid %d", pid)
 
-	// this is the main process loop
-	childProcess := process.AtomicChildProcess{}
-	childProcess.Store(nil)
+	// this is the main process loop, just keep restarting the child process until the main context is cancelled or an error occurs
 	go func() {
-		// keep restarting the child process until the main context is cancelled (terminated by the user or an error occurs)
-		for ctx.Err() == nil {
-			proc, err := process.NewChildProcess(cfg)
-			if err != nil {
-				log.Fatalf("creating child process: %v", err)
-			}
-
-			childProcess.Store(proc)
-
-			backoffPolicy := backoff.NewExponentialBackOff()
-			backoffPolicy.InitialInterval = 500 * time.Millisecond
-			backoffPolicy.MaxInterval = 5000 * time.Millisecond
-			backoffPolicy.MaxElapsedTime = 60 * time.Second
-
-			err = backoff.Retry(func() error {
-				// TODO: is ok to pass the main context here?
-				return proc.Start(ctx, consoleWriter, func(n notification.Notification) {
-					db.LogNotification(n)
-					consoleWriter.Notify(n)
-					proxy.Notify(n)
-					webui.Notify(n)
-					notifier.Notify(n)
-				})
-			}, backoffPolicy)
-
-			if err != nil {
-				log.Errorf("failed retrying child process: %v", err)
-				ctxCancel()
-				return
-			}
-		}
-	}()
-
-	// handle restart events
-	go func() {
-		for {
-			select {
-			case hint := <-hardRestart:
-				log.Info("hard restart: " + hint)
-				proc := childProcess.Load()
-				if proc != nil {
-					proc.Stop()
-				}
-			case hint := <-softRestart:
-				log.Info("soft restart: " + hint)
-				err := notifier.SendSoftRestart(hint)
-				if err != nil {
-					log.Warnf("notifying child process: %v", err)
-				}
-			case task := <-oobTask:
-				log.Info("out of band task: " + task)
-				proc := childProcess.Load()
-				if proc != nil {
-					proc.ExecuteOOBTask(task, func(n notification.Notification) {
-						db.LogNotification(n)
-						consoleWriter.Notify(n)
-					})
-				}
-			case <-ctx.Done():
-				return
-			}
+		err := app.RunChildProcess(ctx, cfg)
+		if err != nil {
+			ctxCancel()
 		}
 	}()
 
@@ -387,4 +200,32 @@ func loadConfig() (config.Config, error) {
 	}
 
 	return cfg, nil
+}
+
+type logFormatter struct {
+}
+
+func (l *logFormatter) Format(entry *log.Entry) ([]byte, error) {
+	var levelColor int
+	switch entry.Level {
+	case log.DebugLevel, log.TraceLevel:
+		levelColor = gray
+	case log.WarnLevel:
+		levelColor = yellow
+	case log.ErrorLevel, log.FatalLevel, log.PanicLevel:
+		levelColor = red
+	case log.InfoLevel:
+		levelColor = blue
+	default:
+		levelColor = blue
+	}
+
+	entry.Message = strings.TrimSuffix(entry.Message, "\n")
+
+	b := &bytes.Buffer{}
+	fmt.Fprintf(b, "\x1b[%dm%s", levelColor, entry.Message)
+
+	b.WriteByte('\n')
+	return b.Bytes(), nil
+
 }
