@@ -22,6 +22,7 @@ import (
 )
 
 type App struct {
+	proxyOnly     bool
 	sigint        chan os.Signal
 	hardRestart   chan string
 	softRestart   chan string
@@ -86,6 +87,7 @@ func New(cfg config.Config) (*App, error) {
 	var err error
 
 	app := &App{
+		proxyOnly:    cfg.ProxyOnly,
 		sigint:       make(chan os.Signal, 1),
 		hardRestart:  make(chan string),
 		softRestart:  make(chan string),
@@ -233,10 +235,12 @@ func (a *App) ProcessRestartEvents(ctx context.Context) error {
 	for {
 		select {
 		case hint := <-a.hardRestart:
-			log.Info("hard restart: " + hint)
-			proc := a.childProcess.Load()
-			if proc != nil {
-				proc.Stop()
+			if !a.proxyOnly {
+				log.Info("hard restart: " + hint)
+				proc := a.childProcess.Load()
+				if proc != nil {
+					proc.Stop()
+				}
 			}
 		case hint := <-a.softRestart:
 			log.Info("soft restart: " + hint)
@@ -245,10 +249,12 @@ func (a *App) ProcessRestartEvents(ctx context.Context) error {
 				log.Warnf("notifying child process: %v", err)
 			}
 		case task := <-a.oobTask:
-			log.Info("out of band task: " + task)
-			proc := a.childProcess.Load()
-			if proc != nil {
-				proc.ExecuteOOBTask(task, a.Notify)
+			if !a.proxyOnly {
+				log.Info("out of band task: " + task)
+				proc := a.childProcess.Load()
+				if proc != nil {
+					proc.ExecuteOOBTask(task, a.Notify)
+				}
 			}
 		case <-ctx.Done():
 			return nil

@@ -126,15 +126,16 @@ func main() {
 	log.Infof("gomon started with pid %d", pid)
 
 	// this is the main process loop, just keep restarting the child process until the main context is cancelled or an error occurs
-	go func() {
-		// keep restarting the child process until the main context is cancelled (terminated by the user or an error occurs)
-		for ctx.Err() == nil {
-			err := app.RunChildProcess(cfg)
-			if err != nil {
-				ctxCancel()
+	if !cfg.ProxyOnly {
+		go func() {
+			for ctx.Err() == nil {
+				err := app.RunChildProcess(cfg)
+				if err != nil {
+					ctxCancel()
+				}
 			}
-		}
-	}()
+		}()
+	}
 
 	<-ctx.Done()
 }
@@ -145,12 +146,13 @@ func loadConfig() (config.Config, error) {
 	var entrypoint string
 	var entrypointArgs []string
 	var envFiles string
+	var proxyOnly bool
 
 	fs := flag.NewFlagSet("gomon flags", flag.ExitOnError)
 	fs.StringVar(&configPath, "conf", "", "Path to a config file (gomon.config.yml))")
 	fs.StringVar(&rootDirectory, "dir", "", "The directory to watch")
 	fs.StringVar(&envFiles, "env", "", "A comma separated list of env files to load")
-	maybeProxyOnly := fs.Bool("proxy-only", false, "Only start the proxy, do not start the child process")
+	fs.BoolVar(&proxyOnly, "proxy-only", false, "Only start the proxy, do not start the child process")
 	err := fs.Parse(os.Args[1:])
 	if err != nil {
 		log.Fatalf("parsing flags: %v", err)
@@ -198,8 +200,8 @@ func loadConfig() (config.Config, error) {
 		cfg.EnvFiles = strings.Split(envFiles, ",")
 	}
 
-	if maybeProxyOnly != nil {
-		cfg.ProxyOnly = *maybeProxyOnly
+	if proxyOnly {
+		cfg.ProxyOnly = true
 	}
 
 	return cfg, nil
