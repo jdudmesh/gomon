@@ -33,7 +33,7 @@
         >
       </div>
       <div class="flex flex-row gap-2">
-        <form id="search-form" class="flex flex-row gap-2 text-slate-900" hx-get="/actions/search" hx-target="#log-output-inner" hx-swap="innerHTML">
+        <div class="flex flex-row gap-2 text-slate-900">
           <input
             id="search-input"
             name="q"
@@ -41,19 +41,27 @@
             class="input input-sm input-bordered w-96"
             placeholder="Search..."
             x-model="searchText"
+            @keydown="onSearchTextKeyDown"
           />
-          <select
-            id="search-select"
-            name="r"
-            class="select select-sm select-bordered w-48"
+          <div
             hx-get="/components/search-select"
             hx-target="this"
-            hx-swap="outerHTML"
+            hx-swap="innerHTML"
             hx-trigger="load"
-            x-model="runId"
-          ></select>
+          >
+            <select
+              id="search-select"
+              name="r"
+              class="select select-sm select-bordered w-48"
+              x-model="runId"
+            ></select>
+          </div>
           <div class="tooltip tooltip-bottom" data-tip="Search">
-            <button type="submit" class="btn btn-sm btn-secondary">
+            <button
+              type="button"
+              class="btn btn-sm btn-secondary"
+              @click="onClickSearch"
+            >
               <svg
                 xmlns="http://www.w3.org/2000/svg"
                 fill="none"
@@ -70,9 +78,14 @@
               </svg>
             </button>
           </div>
-        </form>
+        </div>
         <div class="tooltip tooltip-bottom" data-tip="Restart">
-          <button id="restart" class="btn btn-sm btn-primary text-white" hx-post="/actions/restart" hx-swap="none">
+          <button
+            id="restart"
+            class="btn btn-sm btn-primary text-white"
+            hx-post="/actions/restart"
+            hx-swap="none"
+          >
             <svg
               xmlns="http://www.w3.org/2000/svg"
               fill="none"
@@ -90,7 +103,12 @@
           </button>
         </div>
         <div class="tooltip tooltip-bottom" data-tip="Exit">
-          <button id="exit" class="btn btn-sm btn-primary" hx-post="/actions/exit" hx-swap="none">
+          <button
+            id="exit"
+            class="btn btn-sm btn-primary"
+            hx-post="/actions/exit"
+            hx-swap="none"
+          >
             <svg
               xmlns="http://www.w3.org/2000/svg"
               fill="none"
@@ -110,8 +128,14 @@
       </div>
     </nav>
     <main id="log-output" class="m-4 font-mono overflow-y-scroll">
-      <div id="log-output-inner" hx-get="/actions/search" hx-trigger="load" hx-swap="innerHTML"></div>
-      <div class="blinking-cursor" />
+      <div
+        id="log-output-inner"
+        hx-get="/actions/search"
+        hx-trigger="load,custom:search"
+        hx-swap="innerHTML"
+        hx-include="[name=q],[name=r]"
+      ></div>
+      <div class="blinking-cursor" x-show="!isShowingSearchResults" />
     </main>
     <div id="connection-error" class="toast" x-show="isShowingConnectionError">
       <div class="alert alert-error">
@@ -132,5 +156,39 @@
         <span>Not connected</span>
       </div>
     </div>
+    <dialog id="zoom-dialog" class="w-5/6 h-5/6" autofocus>
+      <div class="flex flex-col p-4 items-stretch w-full h-full">
+        <div class="flex flex-row justify-between items-center grow-0">
+          <h2 class="text-xl">Zoom</h2>
+          <button
+            class="btn btn-sm btn-ghost"
+            @click="document.getElementById('zoom-dialog').close()"
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke-width="1.5"
+              stroke="currentColor"
+              class="w-6 h-6"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                d="M6 18L18 6M6 6l12 12"
+              />
+            </svg>
+          </button>
+        </div>
+        <div class="p-4 grow">
+          <textarea
+            id="zoom-input"
+            class="input input-bordered font-mono w-full h-full"
+            readonly
+            x-model="zoomContent"
+          ></textarea>
+        </div>
+      </div>
+    </dialog>
   </body>
 </html>

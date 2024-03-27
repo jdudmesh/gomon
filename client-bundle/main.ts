@@ -4,9 +4,9 @@ import Alpine from "alpinejs";
 import htmx from "htmx.org";
 
 interface SSEEvent {
-	target: string
-	swap:   string
-	markup: string
+  target: string;
+  swap: string;
+  markup: string;
 }
 
 declare global {
@@ -21,55 +21,83 @@ window.htmx = htmx;
 
 Alpine.data("search", () => ({
   searchText: "",
-  runId: 0,
-  isPaused: false,
+  runId: "all",
   isShowingSearchResults: false,
   isShowingConnectionError: false,
-  eventSource: new EventSource("/sse?stream=events", {withCredentials: false}),
+  eventSource: new EventSource("/sse?stream=events", {
+    withCredentials: false
+  }),
   eventQueue: [] as MessageEvent[],
   toastTimeout: null as number | null,
+  zoomContent: "",
   init: function () {
     console.log("init");
-    this.$watch("searchText", this.onSearchTextChanged);
+    this.$watch("searchText", (val) => {
+      this.onSearchTextChanged(val);
+    });
+    this.$watch("runId", (val) => {
+      this.onRunIdChanged(val);
+    });
+    this.$watch("isShowingSearchResults", (val) => {
+      this.onIsShowingSearchResults(val);
+    });
 
     this.eventSource.onmessage = (ev) => {
       this.handleEventSourceMessage(ev);
-    }
+    };
     this.eventSource.onerror = () => {
       this.handleEventSourceError();
-    }
+    };
   },
   onSearchTextChanged: function (value: string) {
-    console.log("search text changed", value);
-  },
-  handleEventSourceMessage: function (ev: MessageEvent) {
-    if (this.isPaused) {
-      this.eventQueue.push(ev);
+    if (value.length === 0) {
+      this.isShowingSearchResults = false;
       return;
     }
-
-    const msg = JSON.parse(ev.data) as SSEEvent;
-    const targetEl = document.querySelector(msg.target) as HTMLElement;
+    this.isShowingSearchResults = true;
+    this.onClickSearch();
+  },
+  onRunIdChanged: function (value: string) {
+    if (value === "all") {
+      this.isShowingSearchResults = false;
+      this.searchText = "";
+      return;
+    }
+    this.isShowingSearchResults = true;
+    if (this.searchText.length > 0) {
+      this.onClickSearch();
+    }
+  },
+  onIsShowingSearchResults: function (value: boolean) {
+    console.log("isShowingSearchResults changed", value);
+    if (!value) {
+      while (this.eventQueue.length > 0) {
+        const ev = this.eventQueue.shift()!;
+        this.processEvent(ev);
+      }
+    }
+  },
+  onSearchTextKeyDown: function (ev: KeyboardEvent) {
+    if (ev.key === "Enter") {
+      this.onClickSearch();
+    }
+  },
+  onClickSearch: function () {
+    const targetEl = document.querySelector("#log-output-inner") as HTMLElement;
     if (!targetEl) {
       throw new Error("Target element not found");
     }
-
-    const range = document.createRange();
-    range.selectNode(targetEl);
-    const documentFragment = range.createContextualFragment(msg.markup);
-
-    if(msg.target === "#log-output-inner") {
-      targetEl.appendChild(documentFragment);
-
-      (targetEl.lastChild as HTMLElement)?.scrollIntoView({
-        block: "end",
-        behavior: "instant"
-      });
+    const event = new CustomEvent("custom:search", {
+      detail: { key: "value" }
+    });
+    targetEl.dispatchEvent(event);
+  },
+  handleEventSourceMessage: function (ev: MessageEvent) {
+    if (this.isShowingSearchResults) {
+      this.eventQueue.push(ev);
+      return;
     }
-
-    if(msg.target === "#search-select") {
-      targetEl.parentNode?.replaceChild(documentFragment, targetEl);
-    }
+    this.processEvent(ev);
   },
   handleEventSourceError: function () {
     console.log("sse error");
@@ -80,47 +108,45 @@ Alpine.data("search", () => ({
     this.toastTimeout = setTimeout(() => {
       this.isShowingConnectionError = false;
     }, 5000);
+  },
+  processEvent: function (ev: MessageEvent) {
+    const msg = JSON.parse(ev.data) as SSEEvent;
+    const targetEl = document.querySelector(msg.target) as HTMLElement;
+    if (!targetEl) {
+      throw new Error("Target element not found");
+    }
+
+    const range = document.createRange();
+    range.selectNode(targetEl);
+    const documentFragment = range.createContextualFragment(msg.markup);
+
+    if (msg.target === "#log-output-inner") {
+      targetEl.appendChild(documentFragment);
+
+      (targetEl.lastChild as HTMLElement)?.scrollIntoView({
+        block: "end",
+        behavior: "instant"
+      });
+    }
+
+    if (msg.target === "#search-select") {
+      targetEl.parentNode?.replaceChild(documentFragment, targetEl);
+    }
+  },
+  onZoomEntry: function (ev: MouseEvent) {
+    const targetEl = ev.target as HTMLElement;
+    const textContent = targetEl
+      .closest(".log-entry")
+      ?.querySelector(".log-text")?.textContent;
+    try {
+      const data = JSON.parse(textContent || "");
+      this.zoomContent = JSON.stringify(data, null, 2);
+    } catch (e) {
+      this.zoomContent = textContent || "";
+    }
+    const dialog = document.getElementById("zoom-dialog") as HTMLDialogElement;
+    dialog.showModal();
   }
-}))
+}));
 
-Alpine.start()
-
-
-
-
-// appState.watch("searchText", (searchText) => {
-//   const pause = searchText.length > 0;
-//   if (!pause) {
-//     appState.model.isShowingSearchResults = false;
-//   }
-//   eventSource.pause(pause);
-//   const el = document.querySelector(".blinking-cursor") as HTMLElement;
-//   if (!el) return;
-//   el.style.visibility = pause ? "hidden" : "visible";
-// });
-
-// appState.watch("isShowingSearchResults", (isShowingSearchResults) => {
-//   if (!isShowingSearchResults) {
-//     eventSource.clear();
-//     searchSelectInitActor.retrigger();
-//     logActor.retrigger();
-//   }
-// });
-
-// appState.watch("isShowingConnectionError", (isShowingConnectionError) => {
-//   document.getElementById("connection-error")!.style.display =
-//     isShowingConnectionError ? "block" : "none";
-// });
-
-// appState.watch("runId", (runId) => {
-//   const el = document.querySelector("#search-select") as HTMLSelectElement;
-//   const currentRunId = el.getAttribute("data-current-run-id") as string;
-//   const pause = runId != currentRunId;
-//   eventSource.pause(pause);
-//   if (pause && appState.model.searchText.length > 0) {
-//     searchFormActor.retrigger();
-//   }
-//   const cursorEl = document.querySelector(".blinking-cursor") as HTMLElement;
-//   if (!cursorEl) return;
-//   cursorEl.style.visibility = pause ? "hidden" : "visible";
-// });
+Alpine.start();

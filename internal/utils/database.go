@@ -134,11 +134,13 @@ func (d *Database) FindNotifications(runID, stm, filter string) ([][]*notificati
 			if err != nil {
 				return nil, fmt.Errorf("scanning notification: %w", err)
 			}
-			if lastRunID != ev.ChildProccessID {
-				notifs = append(notifs, []*notification.Notification{})
-				lastRunID = ev.ChildProccessID
+			if ev.ChildProccessID != "" {
+				if lastRunID != ev.ChildProccessID {
+					notifs = append(notifs, []*notification.Notification{})
+					lastRunID = ev.ChildProccessID
+				}
+				notifs[len(notifs)-1] = append(notifs[len(notifs)-1], ev)
 			}
-			notifs[len(notifs)-1] = append(notifs[len(notifs)-1], ev)
 		}
 	}
 
