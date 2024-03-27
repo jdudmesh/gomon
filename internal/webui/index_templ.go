@@ -200,7 +200,17 @@ func Event(n *notification.Notification) templ.Component {
 			if err != nil {
 				return err
 			}
-			_, err = templBuffer.WriteString("</div><div class=\"cursor-pointer entry-button\"><svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 16 16\" fill=\"currentColor\" class=\"w-4 h-4\"><path d=\"M6.25 8.75v-1h-1a.75.75 0 0 1 0-1.5h1v-1a.75.75 0 0 1 1.5 0v1h1a.75.75 0 0 1 0 1.5h-1v1a.75.75 0 0 1-1.5 0Z\"></path><path fill-rule=\"evenodd\" d=\"M7 12c1.11 0 2.136-.362 2.965-.974l2.755 2.754a.75.75 0 1 0 1.06-1.06l-2.754-2.755A5 5 0 1 0 7 12Zm0-1.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z\" clip-rule=\"evenodd\"></path></svg></div></div></div>")
+			_, err = templBuffer.WriteString("</div>")
+			if err != nil {
+				return err
+			}
+			if len(n.Message) > 0 {
+				_, err = templBuffer.WriteString("<div class=\"cursor-pointer entry-button\"><svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 16 16\" fill=\"currentColor\" class=\"w-4 h-4\"><path d=\"M6.25 8.75v-1h-1a.75.75 0 0 1 0-1.5h1v-1a.75.75 0 0 1 1.5 0v1h1a.75.75 0 0 1 0 1.5h-1v1a.75.75 0 0 1-1.5 0Z\"></path><path fill-rule=\"evenodd\" d=\"M7 12c1.11 0 2.136-.362 2.965-.974l2.755 2.754a.75.75 0 1 0 1.06-1.06l-2.754-2.755A5 5 0 1 0 7 12Zm0-1.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z\" clip-rule=\"evenodd\"></path></svg></div>")
+				if err != nil {
+					return err
+				}
+			}
+			_, err = templBuffer.WriteString("</div></div>")
 			if err != nil {
 				return err
 			}
@@ -223,7 +233,17 @@ func Event(n *notification.Notification) templ.Component {
 			if err != nil {
 				return err
 			}
-			_, err = templBuffer.WriteString("</div><div class=\"cursor-pointer entry-button\"><svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 16 16\" fill=\"currentColor\" class=\"w-4 h-4\"><path d=\"M6.25 8.75v-1h-1a.75.75 0 0 1 0-1.5h1v-1a.75.75 0 0 1 1.5 0v1h1a.75.75 0 0 1 0 1.5h-1v1a.75.75 0 0 1-1.5 0Z\"></path><path fill-rule=\"evenodd\" d=\"M7 12c1.11 0 2.136-.362 2.965-.974l2.755 2.754a.75.75 0 1 0 1.06-1.06l-2.754-2.755A5 5 0 1 0 7 12Zm0-1.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z\" clip-rule=\"evenodd\"></path></svg></div></div></div>")
+			_, err = templBuffer.WriteString("</div>")
+			if err != nil {
+				return err
+			}
+			if len(n.Message) > 0 {
+				_, err = templBuffer.WriteString("<div class=\"cursor-pointer entry-button\"><svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 16 16\" fill=\"currentColor\" class=\"w-4 h-4\"><path d=\"M6.25 8.75v-1h-1a.75.75 0 0 1 0-1.5h1v-1a.75.75 0 0 1 1.5 0v1h1a.75.75 0 0 1 0 1.5h-1v1a.75.75 0 0 1-1.5 0Z\"></path><path fill-rule=\"evenodd\" d=\"M7 12c1.11 0 2.136-.362 2.965-.974l2.755 2.754a.75.75 0 1 0 1.06-1.06l-2.754-2.755A5 5 0 1 0 7 12Zm0-1.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z\" clip-rule=\"evenodd\"></path></svg></div>")
+				if err != nil {
+					return err
+				}
+			}
+			_, err = templBuffer.WriteString("</div></div>")
 			if err != nil {
 				return err
 			}
@@ -303,212 +323,6 @@ func EventList(notifs [][]*notification.Notification) templ.Component {
 			if err != nil {
 				return err
 			}
-		}
-		if !templIsBuffer {
-			_, err = templBuffer.WriteTo(w)
-		}
-		return err
-	})
-}
-
-func Console(currentRun string, runs []*notification.Notification, events []*notification.Notification) templ.Component {
-	return templ.ComponentFunc(func(ctx context.Context, w io.Writer) (err error) {
-		templBuffer, templIsBuffer := w.(*bytes.Buffer)
-		if !templIsBuffer {
-			templBuffer = templ.GetBuffer()
-			defer templ.ReleaseBuffer(templBuffer)
-		}
-		ctx = templ.InitializeContext(ctx)
-		var_14 := templ.GetChildren(ctx)
-		if var_14 == nil {
-			var_14 = templ.NopComponent
-		}
-		ctx = templ.ClearChildren(ctx)
-		_, err = templBuffer.WriteString("<!doctype html><html><head><title>")
-		if err != nil {
-			return err
-		}
-		var_15 := `gomon console`
-		_, err = templBuffer.WriteString(var_15)
-		if err != nil {
-			return err
-		}
-		_, err = templBuffer.WriteString("</title><script src=\"https://unpkg.com/htmx.org@1.9.6\" integrity=\"sha384-FhXw7b6AlE/jyjlZH5iHa/tTe9EpJ1Y55RjcgPbjeWMskSxZt1v9qkxLJWNJaGni\" crossorigin=\"anonymous\">")
-		if err != nil {
-			return err
-		}
-		var_16 := ``
-		_, err = templBuffer.WriteString(var_16)
-		if err != nil {
-			return err
-		}
-		_, err = templBuffer.WriteString("</script><script src=\"https://cdn.tailwindcss.com\">")
-		if err != nil {
-			return err
-		}
-		var_17 := ``
-		_, err = templBuffer.WriteString(var_17)
-		if err != nil {
-			return err
-		}
-		_, err = templBuffer.WriteString("</script><link href=\"https://cdn.jsdelivr.net/npm/daisyui@3.9.3/dist/full.css\" rel=\"stylesheet\" type=\"text/css\"><style>")
-		if err != nil {
-			return err
-		}
-		var_18 := `#event-list > :first-child { margin-top: auto !important; }`
-		_, err = templBuffer.WriteString(var_18)
-		if err != nil {
-			return err
-		}
-		_, err = templBuffer.WriteString("</style></head><body class=\"bg-slate-900 text-white flex flex-col h-screen\" data-current-run=\"")
-		if err != nil {
-			return err
-		}
-		_, err = templBuffer.WriteString(templ.EscapeString(currentRun))
-		if err != nil {
-			return err
-		}
-		_, err = templBuffer.WriteString("\"><nav class=\"grow-0 flex flex-row mx-2 p-2 justify-between items-center\"><div class=\"flex flex-row\"><a href=\"/\" class=\"text-2xl text-bold\">")
-		if err != nil {
-			return err
-		}
-		var_19 := `gomon`
-		_, err = templBuffer.WriteString(var_19)
-		if err != nil {
-			return err
-		}
-		_, err = templBuffer.WriteString("</a></div><div class=\"flex flex-row items-center gap-2\"><label class=\"px-4\">")
-		if err != nil {
-			return err
-		}
-		var_20 := `Filter:`
-		_, err = templBuffer.WriteString(var_20)
-		if err != nil {
-			return err
-		}
-		_, err = templBuffer.WriteString("</label><input type=\"text\" name=\"filter\" class=\"input input-bordered text-slate-900\" placeholder=\"filter\" data-send=\"true\"><label class=\"px-4\">")
-		if err != nil {
-			return err
-		}
-		var_21 := `Stream:`
-		_, err = templBuffer.WriteString(var_21)
-		if err != nil {
-			return err
-		}
-		_, err = templBuffer.WriteString("</label><select name=\"stm\" class=\"select select-bordered text-slate-900\" hx-get=\"/search\" hx-include=\"[data-send=&#39;true&#39;]\" hx-target=\"#event-list\" hx-trigger=\"input\" data-send=\"true\"><option value=\"all\" selected>")
-		if err != nil {
-			return err
-		}
-		var_22 := `all`
-		_, err = templBuffer.WriteString(var_22)
-		if err != nil {
-			return err
-		}
-		_, err = templBuffer.WriteString("</option><option value=\"stdout\">")
-		if err != nil {
-			return err
-		}
-		var_23 := `stdout`
-		_, err = templBuffer.WriteString(var_23)
-		if err != nil {
-			return err
-		}
-		_, err = templBuffer.WriteString("</option><option value=\"stderr\">")
-		if err != nil {
-			return err
-		}
-		var_24 := `stderr`
-		_, err = templBuffer.WriteString(var_24)
-		if err != nil {
-			return err
-		}
-		_, err = templBuffer.WriteString("</option></select><label class=\"px-4\">")
-		if err != nil {
-			return err
-		}
-		var_25 := `Run:`
-		_, err = templBuffer.WriteString(var_25)
-		if err != nil {
-			return err
-		}
-		_, err = templBuffer.WriteString("</label>")
-		if err != nil {
-			return err
-		}
-		err = SearchSelect(runs, currentRun).Render(ctx, templBuffer)
-		if err != nil {
-			return err
-		}
-		_, err = templBuffer.WriteString("<button id=\"btn-search\" class=\"btn btn-primary\" hx-get=\"/search\" hx-include=\"[data-send=&#39;true&#39;]\" hx-target=\"#event-list\" hx-trigger=\"click\">")
-		if err != nil {
-			return err
-		}
-		var_26 := `Search`
-		_, err = templBuffer.WriteString(var_26)
-		if err != nil {
-			return err
-		}
-		_, err = templBuffer.WriteString("</button><button id=\"btn-restart\" class=\"btn btn-secondary\" hx-post=\"/restart\">")
-		if err != nil {
-			return err
-		}
-		var_27 := `Hard Restart`
-		_, err = templBuffer.WriteString(var_27)
-		if err != nil {
-			return err
-		}
-		_, err = templBuffer.WriteString("</button></div></nav><main id=\"event-list\" class=\"grow mx-4 my-2 p-4 border-solid border border-blue-400 rounded-lg flex flex-col overflow-y-auto\">")
-		if err != nil {
-			return err
-		}
-		var_28 := `hello`
-		_, err = templBuffer.WriteString(var_28)
-		if err != nil {
-			return err
-		}
-		_, err = templBuffer.WriteString("</main><script>")
-		if err != nil {
-			return err
-		}
-		var_29 := `
-				const currentRun = document.body.getAttribute("data-current-run");
-				const eventList = document.getElementById("event-list");
-				function listen() {
-					const logSource = new EventSource("/__gomon__/events?stream=logs", {
-						withCredentials: true,
-					});
-
-					const runSource = new EventSource("/__gomon__/events?stream=runs", {
-						withCredentials: true,
-					});
-
-					logSource.onmessage = (event) => {
-						const selectedRun = document.querySelector("select[name=run]").value;
-						if (selectedRun != currentRun) {
-							return;
-						}
-						eventList.insertAdjacentHTML("beforeend", event.data);
-						eventList.scrollTop = eventList.scrollHeight;
-					};
-
-					runSource.onmessage = (event) => {
-						window.location.reload();
-					};
-				}
-
-				function clearConsole() {
-					eventList.innerHTML = "";
-				}
-
-				listen();
-			`
-		_, err = templBuffer.WriteString(var_29)
-		if err != nil {
-			return err
-		}
-		_, err = templBuffer.WriteString("</script></body></html>")
-		if err != nil {
-			return err
 		}
 		if !templIsBuffer {
 			_, err = templBuffer.WriteTo(w)

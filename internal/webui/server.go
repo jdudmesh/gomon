@@ -35,11 +35,9 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-type KiloEvent struct {
-	Target string `json:"x-kilo-target"`
-	Swap   string `json:"x-kilo-swap"`
-	Markup string `json:"x-kilo-markup"`
-	Action string `json:"x-kilo-action"`
+type SSEEvent struct {
+	Target string `json:"target"`
+	Markup string `json:"markup"`
 }
 
 type Database interface {
@@ -176,9 +174,8 @@ func (c *server) sendLogEvent(n notification.Notification) error {
 		return fmt.Errorf("rendering event: %w", err)
 	}
 
-	msg := KiloEvent{
+	msg := SSEEvent{
 		Target: "#" + n.ChildProccessID,
-		Swap:   "beforeend scroll:lastchild",
 		Markup: buffer.String(),
 	}
 	msgBytes, err := json.Marshal(msg)
@@ -200,9 +197,8 @@ func (c *server) sendRunEvent(n notification.Notification) error {
 		return fmt.Errorf("rendering event: %w", err)
 	}
 
-	msg := KiloEvent{
+	msg := SSEEvent{
 		Target: "#log-output-inner",
-		Swap:   "beforeend scroll:lastchild",
 		Markup: buffer.String(),
 	}
 	msgBytes, err := json.Marshal(msg)
@@ -219,9 +215,8 @@ func (c *server) sendRunEvent(n notification.Notification) error {
 		log.Errorf("rendering: %v", err)
 		return fmt.Errorf("rendering event: %w", err)
 	}
-	msg = KiloEvent{
+	msg = SSEEvent{
 		Target: "#search-select",
-		Swap:   "outerHTML",
 		Markup: buffer.String(),
 	}
 	msgBytes, err = json.Marshal(msg)
