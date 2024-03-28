@@ -9,6 +9,16 @@ interface SSEEvent {
   markup: string;
 }
 
+export type SwapType =
+  | "innerHTML"
+  | "outerHTML"
+  | "beforebegin"
+  | "afterbegin"
+  | "beforeend"
+  | "afterend"
+  | "delete"
+  | "none";
+
 declare global {
   interface Window {
     Alpine: typeof Alpine;
@@ -111,27 +121,7 @@ Alpine.data("search", () => ({
   },
   processEvent: function (ev: MessageEvent) {
     const msg = JSON.parse(ev.data) as SSEEvent;
-    const targetEl = document.querySelector(msg.target) as HTMLElement;
-    if (!targetEl) {
-      throw new Error("Target element not found");
-    }
-
-    const range = document.createRange();
-    range.selectNode(targetEl);
-    const documentFragment = range.createContextualFragment(msg.markup);
-
-    if (msg.target === "#log-output-inner") {
-      targetEl.appendChild(documentFragment);
-
-      (targetEl.lastChild as HTMLElement)?.scrollIntoView({
-        block: "end",
-        behavior: "instant"
-      });
-    }
-
-    if (msg.target === "#search-select") {
-      targetEl.parentNode?.replaceChild(documentFragment, targetEl);
-    }
+    swap(msg);
   },
   onZoomEntry: function (ev: MouseEvent) {
     const targetEl = ev.target as HTMLElement;
@@ -150,3 +140,71 @@ Alpine.data("search", () => ({
 }));
 
 Alpine.start();
+
+function swap(msg: SSEEvent) {
+  const targetEl = document.querySelector(msg.target) as HTMLElement;
+  if (!targetEl) {
+    throw new Error(`Target element not found: ${msg.target}`);
+  }
+
+  const f = msg.swap.split(" ");
+  const swapType = f[0] as SwapType;
+  const scrollExpr = f.length > 1 ? f[1] : "";
+
+  const range = document.createRange();
+  range.selectNode(targetEl);
+  const documentFragment = range.createContextualFragment(msg.markup);
+
+  switch (swapType) {
+    case "innerHTML":
+      while (targetEl.firstChild) {
+        targetEl.removeChild(targetEl.firstChild);
+      }
+      targetEl.appendChild(documentFragment);
+      break;
+    case "outerHTML":
+      targetEl.parentNode?.replaceChild(documentFragment, targetEl);
+      break;
+    case "beforebegin":
+      targetEl.parentNode?.insertBefore(documentFragment, targetEl);
+      break;
+    case "afterbegin":
+      targetEl.insertBefore(documentFragment, targetEl.firstChild);
+      break;
+    case "beforeend":
+      targetEl.appendChild(documentFragment);
+      break;
+    case "afterend":
+      targetEl.parentNode?.insertBefore(documentFragment, targetEl.nextSibling);
+      break;
+    default:
+      break;
+  }
+
+  if (scrollExpr) {
+    const f = scrollExpr.split(":");
+    const scrollType = f[0];
+    const scrollTarget = f[1];
+    switch (scrollType) {
+      case "scroll":
+        switch (scrollTarget) {
+          case "view":
+            (documentFragment.firstChild as HTMLElement)?.scrollIntoView();
+            break;
+          case "lastchild":
+            (targetEl.lastChild as HTMLElement)?.scrollIntoView({
+              block: "end",
+              behavior: "instant"
+            });
+            break;
+          case "nextsibling":
+            (targetEl.nextSibling as HTMLElement)?.scrollIntoView({
+              block: "end",
+              behavior: "instant"
+            });
+            break;
+        }
+        break;
+    }
+  }
+}

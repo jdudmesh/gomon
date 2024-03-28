@@ -27,6 +27,7 @@ import "bytes"
 
 import (
 	"github.com/jdudmesh/gomon/internal/notification"
+	"strconv"
 )
 
 var colourMap = map[notification.NotificationType]string{
@@ -174,7 +175,15 @@ func Event(n *notification.Notification) templ.Component {
 			if err != nil {
 				return err
 			}
-			_, err = templBuffer.WriteString("\" data-event-date=\"{n.CreatedAt}\"><div class=\"grow-0 shrink-0\">")
+			_, err = templBuffer.WriteString("\" data-event-type=\"")
+			if err != nil {
+				return err
+			}
+			_, err = templBuffer.WriteString(templ.EscapeString(strconv.Itoa(int(n.Type))))
+			if err != nil {
+				return err
+			}
+			_, err = templBuffer.WriteString("\"><div class=\"grow-0 shrink-0\">")
 			if err != nil {
 				return err
 			}
@@ -207,7 +216,15 @@ func Event(n *notification.Notification) templ.Component {
 				return err
 			}
 		} else {
-			_, err = templBuffer.WriteString("<div class=\"flex flex-row text-green-400 items-stretch\" data-event-date=\"{ev.CreatedAt}\"><div class=\"w-36 grow-0 shrink-0\">")
+			_, err = templBuffer.WriteString("<div class=\"flex flex-row text-green-400 items-stretch\" data-event-type=\"")
+			if err != nil {
+				return err
+			}
+			_, err = templBuffer.WriteString(templ.EscapeString(strconv.Itoa(int(n.Type))))
+			if err != nil {
+				return err
+			}
+			_, err = templBuffer.WriteString("\"><div class=\"w-36 grow-0 shrink-0\">")
 			if err != nil {
 				return err
 			}

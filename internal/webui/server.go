@@ -38,6 +38,7 @@ import (
 type SSEEvent struct {
 	Target string `json:"target"`
 	Markup string `json:"markup"`
+	Swap   string `json:"swap"`
 }
 
 type Database interface {
@@ -171,6 +172,7 @@ func (c *server) sendLogEvent(n notification.Notification) error {
 
 	msg := SSEEvent{
 		Target: "#" + n.ChildProccessID,
+		Swap:   "beforeend scroll:lastchild",
 		Markup: buffer.String(),
 	}
 	msgBytes, err := json.Marshal(msg)
@@ -194,6 +196,7 @@ func (c *server) sendRunEvent(n notification.Notification) error {
 
 	msg := SSEEvent{
 		Target: "#log-output-inner",
+		Swap:   "beforeend scroll:lastchild",
 		Markup: buffer.String(),
 	}
 	msgBytes, err := json.Marshal(msg)

@@ -17,6 +17,7 @@ package console
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import (
+	"bufio"
 	"io"
 	"os"
 	"strings"
@@ -96,13 +97,14 @@ func (s *streams) Stderr() io.Writer {
 func (s *streams) write(logType notification.NotificationType, logData string, callbackFn notification.NotificationCallback) error {
 	eventDate := time.Now()
 
-	for _, line := range strings.Split(logData, "\n") {
+	scanner := bufio.NewScanner(strings.NewReader(logData))
+	for scanner.Scan() {
 		callbackFn(notification.Notification{
 			ID:              notification.NextID(),
 			Date:            eventDate,
 			ChildProccessID: s.currentChildProcessID,
 			Type:            logType,
-			Message:         line,
+			Message:         scanner.Text(),
 		})
 	}
 

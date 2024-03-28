@@ -18,6 +18,7 @@ package webui
 
 import (
 	"github.com/jdudmesh/gomon/internal/notification"
+	"strconv"
 )
 
 var colourMap = map[notification.NotificationType]string{
@@ -58,7 +59,7 @@ templ SearchSelect(runs []*notification.Notification, currentRun string) {
 
 templ Event(n *notification.Notification) {
 	if col, ok := colourMap[n.Type]; ok {
-		<div class={ "log-entry flex flex-row gap-4 items-stretch " + col } data-event-date="{n.CreatedAt}">
+		<div class={ "log-entry flex flex-row gap-4 items-stretch " + col } data-event-type={strconv.Itoa(int(n.Type))}>
 			<div class="grow-0 shrink-0">{ n.Date.Format("15:04:05.000") }</div>
 			<div class="break-all grow flex flex-row { col }">
 				<span class="log-text">{ n.Message }</span>
@@ -75,7 +76,7 @@ templ Event(n *notification.Notification) {
 			</div>
 		</div>
 	} else {
-		<div class="flex flex-row text-green-400 items-stretch" data-event-date="{ev.CreatedAt}">
+		<div class="flex flex-row text-green-400 items-stretch" data-event-type={strconv.Itoa(int(n.Type))}>
 			<div class="w-36 grow-0 shrink-0">{ n.Date.Format("15:04:05.000") }</div>
 			<div class="break-all grow flex flex-row">
 				<div class="log-text">{ n.Message }</div>
