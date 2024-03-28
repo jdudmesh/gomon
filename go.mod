@@ -5,7 +5,7 @@ go 1.21.6
 toolchain go1.22.0
 
 require (
-	github.com/a-h/templ v0.2.543
+	github.com/a-h/templ v0.2.648
 	github.com/bwmarrin/snowflake v0.3.0
 	github.com/fsnotify/fsnotify v1.7.0
 	github.com/jdudmesh/gomon-ipc v0.1.1
@@ -19,7 +19,6 @@ require (
 
 require (
 	github.com/google/uuid v1.6.0 // indirect
-	github.com/stretchr/testify v1.8.4 // indirect
 	golang.org/x/net v0.21.0 // indirect
 	golang.org/x/sys v0.17.0 // indirect
 )
