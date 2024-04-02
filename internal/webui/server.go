@@ -36,6 +36,8 @@ import (
 )
 
 type SSEEvent struct {
+	ID     string `json:"id"`
+	Date   string `json:"dt"`
 	Target string `json:"target"`
 	Markup string `json:"markup"`
 	Swap   string `json:"swap"`
@@ -171,6 +173,8 @@ func (c *server) sendLogEvent(n notification.Notification) error {
 	}
 
 	msg := SSEEvent{
+		ID:     n.ID,
+		Date:   n.Date.Format(time.RFC3339),
 		Target: "#" + n.ChildProccessID,
 		Swap:   "beforeend scroll:lastchild",
 		Markup: buffer.String(),
@@ -195,6 +199,8 @@ func (c *server) sendRunEvent(n notification.Notification) error {
 	}
 
 	msg := SSEEvent{
+		ID:     n.ID,
+		Date:   n.Date.Format(time.RFC3339),
 		Target: "#log-output-inner",
 		Swap:   "beforeend scroll:lastchild",
 		Markup: buffer.String(),
@@ -214,6 +220,8 @@ func (c *server) sendRunEvent(n notification.Notification) error {
 		return fmt.Errorf("rendering event: %w", err)
 	}
 	msg = SSEEvent{
+		ID:     n.ID,
+		Date:   n.Date.Format(time.RFC3339),
 		Target: "#search-select",
 		Markup: buffer.String(),
 	}

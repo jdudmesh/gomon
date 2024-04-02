@@ -4,6 +4,8 @@ import Alpine from "alpinejs";
 import htmx from "htmx.org";
 
 interface SSEEvent {
+  id: string;
+  dt: string;
   target: string;
   swap: string;
   markup: string;
@@ -144,7 +146,7 @@ Alpine.start();
 function swap(msg: SSEEvent) {
   const targetEl = document.querySelector(msg.target) as HTMLElement;
   if (!targetEl) {
-    throw new Error(`Target element not found: ${msg.target}`);
+    throw new Error(`Target element not found: ${msg.target}/${msg.id}`);
   }
 
   const f = msg.swap.split(" ");

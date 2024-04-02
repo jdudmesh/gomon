@@ -150,6 +150,14 @@ func (c *childProcess) Start(console ConsoleOutput, callbackFn notification.Noti
 
 	c.childProcessID = notification.NextID()
 
+	callbackFn(notification.Notification{
+		ID:              notification.NextID(),
+		ChildProccessID: c.childProcessID,
+		Date:            time.Now(),
+		Type:            notification.NotificationTypeStartup,
+		Message:         "process started",
+	})
+
 	// run prestart tasks
 	for _, task := range c.prestart {
 		err := c.ExecuteOOBTask(task, callbackFn)
@@ -186,14 +194,6 @@ func (c *childProcess) Start(console ConsoleOutput, callbackFn notification.Noti
 	}
 
 	c.state.Set(ProcessStateStarted)
-
-	callbackFn(notification.Notification{
-		ID:              notification.NextID(),
-		ChildProccessID: c.childProcessID,
-		Date:            time.Now(),
-		Type:            notification.NotificationTypeStartup,
-		Message:         "process started",
-	})
 
 	// wait for the child process to exit, putting the exit code into the exitWait channel
 	// allows us to wait for multiple triggers (signals or process exit)
